@@ -1,0 +1,293 @@
+{
+  "generatedAt": "2026-01-31T22:32:40.9340827Z",
+  "toolVersion": "1.0.0.0",
+  "solutionPath": "F:\\src\\NetLift\\tests\\fixtures\\mvc5-basic\\Mvc5Basic.sln",
+  "solutionName": "Mvc5Basic",
+  "totalProjects": 1,
+  "targetFramework": "net8.0",
+  "projects": [
+    {
+      "projectPath": "F:\\src\\NetLift\\tests\\fixtures\\mvc5-basic\\Mvc5Basic\\Mvc5Basic.csproj",
+      "projectName": "Mvc5Basic",
+      "primaryType": 9,
+      "currentFramework": {
+        "moniker": "net48",
+        "type": 0,
+        "version": "4.8",
+        "originalVersion": "v4.8"
+      },
+      "isMvc": true,
+      "isWebApi": false,
+      "isWcfService": false,
+      "usesEf6": true,
+      "sourceFileCount": 5,
+      "estimatedLinesOfCode": 500,
+      "dependencyCount": 19,
+      "dependencies": [
+        {
+          "packageId": "Antlr",
+          "currentVersion": "3.5.0.2",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "EntityFramework",
+          "currentVersion": "6.4.4",
+          "compatibility": 2,
+          "recommendedVersion": null,
+          "replacementPackage": "Microsoft.EntityFrameworkCore",
+          "notes": "EF6 can be migrated to EF Core, but may require schema and query changes."
+        },
+        {
+          "packageId": "Microsoft.AspNet.Identity.Core",
+          "currentVersion": "2.2.3",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.Identity.EntityFramework",
+          "currentVersion": "2.2.3",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.Identity.Owin",
+          "currentVersion": "2.2.3",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.Mvc",
+          "currentVersion": "5.2.7",
+          "compatibility": 3,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.Razor",
+          "currentVersion": "3.2.7",
+          "compatibility": 4,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.Web.Optimization",
+          "currentVersion": "1.1.3",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.AspNet.WebPages",
+          "currentVersion": "3.2.7",
+          "compatibility": 4,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin",
+          "currentVersion": "4.2.0",
+          "compatibility": 2,
+          "recommendedVersion": null,
+          "replacementPackage": "Microsoft.AspNetCore",
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin.Host.SystemWeb",
+          "currentVersion": "4.2.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin.Security",
+          "currentVersion": "4.2.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin.Security.Cookies",
+          "currentVersion": "4.2.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin.Security.Facebook",
+          "currentVersion": "4.2.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Owin.Security.OAuth",
+          "currentVersion": "4.2.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Microsoft.Web.Infrastructure",
+          "currentVersion": "1.0.0.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "Newtonsoft.Json",
+          "currentVersion": "12.0.2",
+          "compatibility": 2,
+          "recommendedVersion": null,
+          "replacementPackage": "System.Text.Json",
+          "notes": "Consider migrating to System.Text.Json for better performance."
+        },
+        {
+          "packageId": "Owin",
+          "currentVersion": "1.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        },
+        {
+          "packageId": "WebGrease",
+          "currentVersion": "1.6.0",
+          "compatibility": 1,
+          "recommendedVersion": null,
+          "replacementPackage": null,
+          "notes": null
+        }
+      ],
+      "complexity": {
+        "level": 2,
+        "score": 57,
+        "factors": [
+          "ASP.NET MVC",
+          "Entity Framework 6",
+          "1 incompatible package",
+          "3 packages requiring replacement",
+          "2 deprecated packages"
+        ]
+      }
+    }
+  ],
+  "overallComplexity": {
+    "level": 2,
+    "score": 57,
+    "factors": [
+      "1 project with high complexity",
+      "1 ASP.NET MVC project",
+      "1 project using EF6"
+    ]
+  },
+  "estimatedAutoMigrationPercentage": 40,
+  "issues": [
+    {
+      "severity": 1,
+      "category": "NuGet",
+      "description": "Package \u0027EntityFramework\u0027 has a modern replacement available.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Consider migrating to \u0027Microsoft.EntityFrameworkCore\u0027.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 2,
+      "category": "NuGet",
+      "description": "Package \u0027Microsoft.AspNet.Mvc\u0027 is not compatible with modern .NET.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Remove or find alternative solution.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 1,
+      "category": "NuGet",
+      "description": "Package \u0027Microsoft.AspNet.Razor\u0027 is deprecated.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Find alternative package or update to supported version.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 1,
+      "category": "NuGet",
+      "description": "Package \u0027Microsoft.AspNet.WebPages\u0027 is deprecated.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Find alternative package or update to supported version.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 1,
+      "category": "NuGet",
+      "description": "Package \u0027Microsoft.Owin\u0027 has a modern replacement available.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Consider migrating to \u0027Microsoft.AspNetCore\u0027.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 1,
+      "category": "NuGet",
+      "description": "Package \u0027Newtonsoft.Json\u0027 has a modern replacement available.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Consider migrating to \u0027System.Text.Json\u0027.",
+      "documentationUrl": null
+    },
+    {
+      "severity": 1,
+      "category": "Technology",
+      "description": "Entity Framework 6 requires migration to EF Core.",
+      "affectedProject": "Mvc5Basic",
+      "affectedFile": null,
+      "lineNumber": null,
+      "recommendation": "Plan for EF Core migration; review breaking changes and feature differences.",
+      "documentationUrl": "https://learn.microsoft.com/en-us/ef/efcore-and-ef6/"
+    }
+  ],
+  "recommendedPhases": [
+    {
+      "order": 3,
+      "name": "Web Applications",
+      "description": "Migrate web applications to ASP.NET Core.",
+      "affectedProjects": [
+        "Mvc5Basic"
+      ],
+      "estimatedAutoPercentage": 40,
+      "manualSteps": [
+        "Convert to ASP.NET Core project structure",
+        "Update routing and middleware pipeline",
+        "Migrate authentication and authorization",
+        "Update views and static files",
+        "Convert Web.config to appsettings.json"
+      ]
+    }
+  ]
+}

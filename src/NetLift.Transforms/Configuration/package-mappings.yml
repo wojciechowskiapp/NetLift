@@ -1,0 +1,396 @@
+# NetLift Package Mapping Rules
+# Version: 1.0
+# Description: NuGet package migration rules for migrating legacy .NET Framework projects to modern .NET
+
+version: "1.0"
+description: "NuGet package migration rules for NetLift"
+
+# Global settings
+settings:
+  default_action: keep
+  preserve_version: true
+  warn_on_major_upgrade: true
+
+# General package mappings
+mappings:
+  # JSON serialization
+  - old_package: Newtonsoft.Json
+    action: keep
+    reason: "Newtonsoft.Json is still widely supported. System.Text.Json is built-in but may require code changes."
+    notes: |
+      Consider migrating to System.Text.Json for better performance.
+      System.Text.Json is included in .NET Core 3.0+ and .NET 5+.
+
+  # HTTP client
+  - old_package: Microsoft.Net.Http
+    action: remove
+    reason: "HttpClient is built into .NET Framework 4.5+ and .NET Core/5+"
+
+  - old_package: Microsoft.AspNet.WebApi.Client
+    action: remove
+    reason: "Use System.Net.Http.Json for JSON APIs in modern .NET"
+    suggestion: "Built-in HttpClient with System.Net.Http.Json extension methods"
+
+  # Configuration
+  - old_package: System.Configuration.ConfigurationManager
+    action: keep
+    version_mapping:
+      net48: "8.0.0"
+      net6.0: "8.0.0"
+      net8.0: "8.0.0"
+
+  # Collections
+  - old_package: Microsoft.Bcl.Immutable
+    action: remove
+    reason: "System.Collections.Immutable is built into .NET Core 2.0+"
+
+# ASP.NET specific migrations
+aspnet_migrations:
+  # ASP.NET MVC
+  - old_package: Microsoft.AspNet.Mvc
+    action: remove
+    reason: "ASP.NET MVC 5 is replaced by ASP.NET Core MVC"
+    requires_code_changes: true
+    migration_guide: "https://docs.microsoft.com/aspnet/core/migration/mvc"
+    notes: |
+      Major namespace changes:
+      - System.Web.Mvc → Microsoft.AspNetCore.Mvc
+      - System.Web.Routing → Microsoft.AspNetCore.Routing
+      Add package: Microsoft.AspNetCore.Mvc (version matches target framework)
+
+  - old_package: Microsoft.AspNet.Razor
+    action: remove
+    reason: "Razor is built into ASP.NET Core"
+
+  # ASP.NET Web API
+  - old_package: Microsoft.AspNet.WebApi
+    action: remove
+    reason: "ASP.NET Web API is replaced by ASP.NET Core MVC/API"
+    requires_code_changes: true
+    migration_guide: "https://docs.microsoft.com/aspnet/core/migration/webapi"
+
+  - old_package: Microsoft.AspNet.WebApi.Core
+    action: remove
+    reason: "Functionality is built into ASP.NET Core"
+
+  - old_package: Microsoft.AspNet.WebApi.WebHost
+    action: remove
+    reason: "Not needed in ASP.NET Core"
+
+  - old_package: Microsoft.AspNet.WebApi.Owin
+    action: remove
+    reason: "Use ASP.NET Core middleware instead"
+
+  # OWIN
+  - old_package: Microsoft.Owin
+    action: remove
+    reason: "ASP.NET Core uses its own middleware pipeline"
+    requires_code_changes: true
+
+  - old_package: Microsoft.Owin.Host.SystemWeb
+    action: remove
+    reason: "Not needed in ASP.NET Core"
+
+  - old_package: Microsoft.Owin.Security
+    action: remove
+    reason: "Use ASP.NET Core authentication middleware"
+    requires_code_changes: true
+    migration_guide: "https://docs.microsoft.com/aspnet/core/migration/identity"
+
+  - old_package: Microsoft.Owin.Security.OAuth
+    action: remove
+    reason: "Use ASP.NET Core authentication with OAuth"
+
+  - old_package: Microsoft.Owin.Security.Jwt
+    action: remove
+    reason: "Use Microsoft.AspNetCore.Authentication.JwtBearer"
+    suggestion: "Add Microsoft.AspNetCore.Authentication.JwtBearer package"
+
+  - old_package: Owin
+    action: remove
+    reason: "ASP.NET Core doesn't use OWIN"
+
+  # ASP.NET Identity
+  - old_package: Microsoft.AspNet.Identity.Core
+    action: remove
+    reason: "Use ASP.NET Core Identity"
+    requires_code_changes: true
+    suggestion: "Add Microsoft.AspNetCore.Identity package"
+
+  - old_package: Microsoft.AspNet.Identity.EntityFramework
+    action: remove
+    reason: "Use Microsoft.AspNetCore.Identity.EntityFrameworkCore"
+    requires_code_changes: true
+
+  - old_package: Microsoft.AspNet.Identity.Owin
+    action: remove
+    reason: "Not needed in ASP.NET Core Identity"
+
+  # SignalR
+  - old_package: Microsoft.AspNet.SignalR
+    action: remove
+    reason: "Use ASP.NET Core SignalR"
+    requires_code_changes: true
+    suggestion: "Add Microsoft.AspNetCore.SignalR package"
+
+  - old_package: Microsoft.AspNet.SignalR.Core
+    action: remove
+    reason: "Use ASP.NET Core SignalR"
+
+# Entity Framework migrations
+ef_migrations:
+  - old_package: EntityFramework
+    action: replace
+    new_package: Microsoft.EntityFrameworkCore
+    version_mapping:
+      net6.0: "6.0.33"
+      net8.0: "8.0.0"
+    reason: "Entity Framework 6 is legacy. Migrate to EF Core for modern .NET."
+    requires_code_changes: true
+    migration_guide: "https://docs.microsoft.com/ef/core/porting/"
+    notes: |
+      EF Core is a complete rewrite and requires code changes.
+      Consider keeping EF6 (version 6.4.4) for .NET Core/5+ if migration is complex.
+      EF6 is supported on .NET Core 3.0+
+
+  - old_package: EntityFramework.SqlServer
+    action: replace
+    new_package: Microsoft.EntityFrameworkCore.SqlServer
+    version_mapping:
+      net6.0: "6.0.33"
+      net8.0: "8.0.0"
+
+  - old_package: Microsoft.EntityFrameworkCore.Tools
+    action: keep
+    version_mapping:
+      net6.0: "6.0.33"
+      net8.0: "8.0.0"
+
+  - old_package: Microsoft.EntityFrameworkCore.Design
+    action: keep
+    version_mapping:
+      net6.0: "6.0.33"
+      net8.0: "8.0.0"
+
+# Testing framework migrations
+testing_migrations:
+  - old_package: NUnit
+    action: upgrade
+    version_mapping:
+      "*": "4.1.0"
+
+  - old_package: NUnit3TestAdapter
+    action: upgrade
+    version_mapping:
+      "*": "4.5.0"
+
+  - old_package: xunit
+    action: upgrade
+    version_mapping:
+      "*": "2.6.6"
+
+  - old_package: xunit.runner.visualstudio
+    action: upgrade
+    version_mapping:
+      "*": "2.5.6"
+
+  - old_package: MSTest.TestFramework
+    action: upgrade
+    version_mapping:
+      "*": "3.2.0"
+
+  - old_package: MSTest.TestAdapter
+    action: upgrade
+    version_mapping:
+      "*": "3.2.0"
+
+  - old_package: Moq
+    action: upgrade
+    version_mapping:
+      "*": "4.20.70"
+
+  - old_package: FluentAssertions
+    action: upgrade
+    version_mapping:
+      "*": "6.12.0"
+
+  - old_package: NSubstitute
+    action: upgrade
+    version_mapping:
+      "*": "5.1.0"
+
+  - old_package: AutoFixture
+    action: upgrade
+    version_mapping:
+      "*": "4.18.1"
+
+  - old_package: Shouldly
+    action: upgrade
+    version_mapping:
+      "*": "4.2.1"
+
+# Logging framework migrations
+logging_migrations:
+  - old_package: log4net
+    action: manual
+    reason: "Consider migrating to Microsoft.Extensions.Logging with Serilog or NLog"
+    suggestion: "Use Microsoft.Extensions.Logging.Abstractions with Serilog.Extensions.Logging or NLog.Extensions.Logging"
+    notes: |
+      log4net still works on .NET Core/5+ but Microsoft.Extensions.Logging is the standard.
+      Migration path: Keep log4net or migrate to Serilog/NLog with Extensions.Logging integration.
+
+  - old_package: NLog
+    action: keep
+    version_mapping:
+      "*": "5.2.8"
+    suggested_additional:
+      - NLog.Extensions.Logging
+    reason: "NLog works with .NET Core/5+ using Extensions.Logging integration"
+
+  - old_package: Serilog
+    action: keep
+    version_mapping:
+      "*": "3.1.1"
+    suggested_additional:
+      - Serilog.Extensions.Logging
+      - Serilog.Sinks.Console
+      - Serilog.Sinks.File
+    reason: "Serilog is compatible with .NET Core/5+ using Extensions.Logging integration"
+
+  - old_package: Common.Logging
+    action: manual
+    reason: "Common.Logging is legacy. Migrate to Microsoft.Extensions.Logging"
+    suggestion: "Use Microsoft.Extensions.Logging.Abstractions"
+
+# Security-related migrations
+security_migrations:
+  - old_package: System.IdentityModel.Tokens.Jwt
+    action: upgrade
+    version_mapping:
+      "*": "7.3.1"
+    security_update: true
+
+  - old_package: Microsoft.IdentityModel.Tokens
+    action: upgrade
+    version_mapping:
+      "*": "7.3.1"
+    security_update: true
+
+  - old_package: Microsoft.IdentityModel.Protocols.OpenIdConnect
+    action: upgrade
+    version_mapping:
+      "*": "7.3.1"
+    security_update: true
+
+  - old_package: IdentityServer4
+    action: manual
+    reason: "IdentityServer4 is commercial. Consider Duende IdentityServer or OpenIddict"
+    suggestion: "Evaluate Duende.IdentityServer (commercial) or OpenIddict (open-source)"
+
+# Obsolete packages
+obsolete_packages:
+  # System.Web dependencies
+  - package: System.Web
+    reason: "System.Web is not available in .NET Core/5+. Use ASP.NET Core equivalents."
+    action: remove
+
+  - package: System.Web.Mvc
+    reason: "Part of legacy ASP.NET. Use ASP.NET Core MVC."
+    action: remove
+
+  - package: System.Web.Http
+    reason: "Part of legacy ASP.NET Web API. Use ASP.NET Core."
+    action: remove
+
+  - package: System.Web.Helpers
+    reason: "Not available in .NET Core/5+. Use ASP.NET Core equivalents."
+    action: remove
+
+  - package: System.Web.WebPages
+    reason: "Not available in .NET Core/5+. Use ASP.NET Core Razor Pages."
+    action: remove
+
+  - package: System.Web.Optimization
+    reason: "Use ASP.NET Core bundling and minification"
+    action: remove
+
+  # BCL packages
+  - package: Microsoft.Bcl
+    reason: "Base Class Library extensions are built into modern .NET"
+    action: remove
+
+  - package: Microsoft.Bcl.Async
+    reason: "Async/await is built into .NET Framework 4.5+ and .NET Core/5+"
+    action: remove
+
+  - package: Microsoft.Bcl.Build
+    reason: "Not needed with modern SDK-style projects"
+    action: remove
+
+  # Compiler packages
+  - package: Microsoft.Net.Compilers
+    reason: "Roslyn compilers are built into .NET SDK"
+    action: remove
+
+  - package: Microsoft.CodeDom.Providers.DotNetCompilerPlatform
+    reason: "Not needed with SDK-style projects"
+    action: remove
+
+  # Threading
+  - package: Microsoft.Bcl.Immutable
+    reason: "System.Collections.Immutable is built into .NET Core 2.0+"
+    action: remove
+
+  # Value types
+  - package: System.ValueTuple
+    reason: "ValueTuple is built into .NET Framework 4.7+ and .NET Core/5+"
+    action: remove
+
+# Analyzer packages
+analyzers:
+  - package: StyleCop.Analyzers
+    action: keep
+    latest_version: "1.2.0-beta.556"
+
+  - package: Microsoft.CodeAnalysis.FxCopAnalyzers
+    action: replace
+    new_package: Microsoft.CodeAnalysis.NetAnalyzers
+    reason: "FxCopAnalyzers is deprecated and replaced by .NET SDK analyzers"
+    version_mapping:
+      "*": "8.0.0"
+    notes: ".NET 5+ SDK includes analyzers by default"
+
+  - package: Microsoft.CodeAnalysis.Analyzers
+    action: keep
+    version_mapping:
+      "*": "3.3.4"
+
+  - package: SonarAnalyzer.CSharp
+    action: keep
+    version_mapping:
+      "*": "9.16.0.82469"
+
+# Framework-specific package removals
+framework_packages:
+  net8.0:
+    # These are built into .NET 8
+    - System.Net.Http
+    - System.ComponentModel.Annotations
+    - System.ValueTuple
+    - System.Memory
+    - System.Buffers
+    - System.Numerics.Vectors
+
+  net6.0:
+    # These are built into .NET 6
+    - System.Net.Http
+    - System.ComponentModel.Annotations
+    - System.ValueTuple
+    - System.Memory
+    - System.Buffers
+
+  net48:
+    # These are built into .NET Framework 4.8
+    - System.Runtime
+    - System.Threading.Tasks
+    - System.Collections
