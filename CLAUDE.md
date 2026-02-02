@@ -6,55 +6,44 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 NetLift is a CLI tool for automated migration of .NET Framework → .NET 8+.
 
-**MVP Scope:**
-- ASP.NET MVC 5 → ASP.NET Core (controllers, routing, filters)
-- Entity Framework 6 → EF Core (DbContext, Fluent API, queries)
-- web.config → appsettings.json + Program.cs
-- WCF → gRPC or REST API (service/data contracts)
+**Migration scope:** ASP.NET MVC 5, Entity Framework 6, web.config, WCF → ASP.NET Core, EF Core, appsettings.json, gRPC/REST
 
-**Out of Scope (MVP):** WebForms, WPF, WinForms, Architecture modernization
+**Modernize scope:** CQRS with MediatR, Clean Architecture scaffolding, FluentValidation, Auth (Identity → JWT), OpenTelemetry
 
-**Post-MVP (planned):** `netlift modernize` command for CQRS, Clean Architecture, layer separation (requires further analysis - see `.plan/MASTER.md`)
+**Out of Scope:** WebForms, WPF, WinForms
 
 ## Commands
 
 ```bash
-dotnet build                                    # Build solution
-dotnet test                                     # Run all 1213 tests
-dotnet test --filter "FullyQualifiedName~Name" # Run specific tests
+dotnet build                                              # Build solution
+dotnet test                                               # Run all tests
+dotnet test --filter "FullyQualifiedName~ClassName"       # Run tests matching class
+dotnet test --filter "Name~MethodName"                    # Run tests matching method
 
 # CLI usage
 dotnet run --project src/NetLift.Cli -- analyze MySolution.sln --html
-dotnet run --project src/NetLift.Cli -- migrate MySolution.sln --dry-run --interactive
+dotnet run --project src/NetLift.Cli -- migrate MySolution.sln --dry-run
+dotnet run --project src/NetLift.Cli -- modernize MySolution.sln --pattern cqrs --dry-run
 ```
 
 ## Architecture
 
 ```
-NetLift.Cli        → Entry point, Spectre.Console commands
+NetLift.Cli        → Spectre.Console commands, DI setup
 NetLift.Core       → Models & interfaces only (no logic)
 NetLift.Analysis   → Parsers (.sln, .csproj, packages.config), type detection
-NetLift.Transforms → Roslyn transformers, SDK converter, package mapping
+NetLift.Transforms → Roslyn rewriters, organized by domain:
+                     ├── Ef/           (DbContext, FluentAPI, queries)
+                     ├── Mvc/          (controllers, routing, filters, Razor)
+                     ├── Wcf/          (service contracts → gRPC/REST)
+                     ├── Modernization/ (CQRS, Clean Architecture, validators)
+                     └── SignalR/      (Hub migration)
 NetLift.Validation → Build validation, HTML reports
 NetLift.Git        → LibGit2Sharp, branch-per-phase, auto-commits
 ```
 
 All interfaces in `NetLift.Core/Interfaces/`, implementations in respective projects.
 DI registration in `src/NetLift.Cli/Program.cs`.
-
-## MVP Status
-
-| Sprint | Focus | Tasks | Status |
-|--------|-------|-------|--------|
-| 1 | Foundation | 14 | ✅ Done |
-| 2 | Project Files | 10 | ✅ Done |
-| 3 | Configuration | 8 | ✅ Done |
-| 4 | MVC Controllers | 10 | ✅ Done |
-| 5 | Entity Framework | 8 | ✅ Done |
-| 6 | WCF → gRPC/REST | 10 | ✅ Done |
-| 7 | Validation & E2E | 6 | ✅ Done |
-
-**MVP Complete:** 66/66 tasks, 1213 tests passing.
 
 ## Confidence Scoring
 
