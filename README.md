@@ -8,7 +8,13 @@ Automated migration from .NET Framework to .NET 8+.
 
 Manual migration works, but it's slow. You're updating namespaces, rewriting DbContext constructors, converting XML config to JSON, fixing using statements. File after file. Most of it is mechanical work that follows predictable patterns.
 
-NetLift handles the mechanical parts. You focus on the code that actually needs human judgment.
+Migration is also a good time to fix architectural debt. Legacy codebases often have business logic buried in controllers, missing separation of concerns, no clear command/query boundaries. Refactoring this by hand while also migrating frameworks is a lot to take on at once.
+
+NetLift handles the mechanical parts. The `migrate` command gets you to .NET 8. The `modernize` command goes further and restructures your code into CQRS patterns with proper separation between commands, queries, and handlers. You end up with a codebase that's not just on a supported framework, but actually easier to work with.
+
+## Example
+
+See a real migration: [ContosoUniversity PR](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/1)
 
 ## How it works
 
@@ -46,11 +52,12 @@ The tool also knows when it's uncertain. Instead of guessing, it adds a TODO com
 - Data contracts to DTOs
 - Client proxy generation
 
-## Example
-
-See a real migration in action:
-
-[ContosoUniversity migration PR](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/1)
+**Modernization** (optional, run after migrate)
+- CQRS structure with MediatR - generates commands, queries, and handlers
+- Controller slimming - extracts business logic into separate services
+- FluentValidation - creates validators for your DTOs
+- Auth patterns - updates Identity code toward JWT
+- Observability - adds structured logging and OpenTelemetry hooks
 
 ## Quick start
 
@@ -60,16 +67,22 @@ cd NetLift
 dotnet build
 ```
 
-Analyze your solution first:
+**1. Analyze** - see what you're working with
 
 ```bash
-dotnet run --project src/NetLift.Cli -- analyze YourSolution.sln
+dotnet run --project src/NetLift.Cli -- analyze YourSolution.sln --verbose
 ```
 
-Then migrate with dry-run to preview changes:
+**2. Migrate** - convert to .NET 8
 
 ```bash
-dotnet run --project src/NetLift.Cli -- migrate YourSolution.sln --dry-run
+dotnet run --project src/NetLift.Cli -- migrate YourSolution.sln --verbose
+```
+
+**3. Modernize** - restructure to CQRS (optional)
+
+```bash
+dotnet run --project src/NetLift.Cli -- modernize YourSolution.sln --pattern cqrs --verbose
 ```
 
 ## Confidence scoring
@@ -92,23 +105,22 @@ When the tool isn't sure, it tells you. No silent failures, no hidden assumption
 **analyze** - Scan a solution and report migration readiness
 
 ```bash
-dotnet run --project src/NetLift.Cli -- analyze Solution.sln
-dotnet run --project src/NetLift.Cli -- analyze Solution.sln --html  # HTML report
+dotnet run --project src/NetLift.Cli -- analyze Solution.sln --verbose
+dotnet run --project src/NetLift.Cli -- analyze Solution.sln --html --verbose
 ```
 
 **migrate** - Run the migration
 
 ```bash
-dotnet run --project src/NetLift.Cli -- migrate Solution.sln --dry-run      # Preview
-dotnet run --project src/NetLift.Cli -- migrate Solution.sln --verbose      # Run
-dotnet run --project src/NetLift.Cli -- migrate Solution.sln --interactive  # Step by step
+dotnet run --project src/NetLift.Cli -- migrate Solution.sln --verbose
+dotnet run --project src/NetLift.Cli -- migrate Solution.sln --interactive --verbose
 ```
 
 **modernize** - Generate CQRS structure (run after migrate)
 
 ```bash
-dotnet run --project src/NetLift.Cli -- modernize Solution.sln --dry-run
-dotnet run --project src/NetLift.Cli -- modernize Solution.sln --pattern cqrs
+dotnet run --project src/NetLift.Cli -- modernize Solution.sln --verbose
+dotnet run --project src/NetLift.Cli -- modernize Solution.sln --pattern cqrs --verbose
 ```
 
 ## Limitations
