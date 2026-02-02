@@ -234,7 +234,8 @@ public class OldFormatProjectParser : IProjectParser
             var hintPath = reference.Element(ns + "HintPath")?.Value;
             if (!string.IsNullOrEmpty(hintPath))
             {
-                assemblyRef.HintPath = hintPath;
+                // Normalize path separators for cross-platform compatibility
+                assemblyRef.HintPath = NormalizePath(hintPath);
             }
 
             // Extract Private
@@ -260,10 +261,12 @@ public class OldFormatProjectParser : IProjectParser
                 continue;
             }
 
+            // Normalize path separators for cross-platform compatibility
+            var normalizedPath = NormalizePath(includeAttr);
             var projectRef = new ProjectReference
             {
-                Path = includeAttr,
-                Name = Path.GetFileNameWithoutExtension(includeAttr)
+                Path = normalizedPath,
+                Name = Path.GetFileNameWithoutExtension(normalizedPath)
             };
 
             // Extract Project GUID
@@ -282,6 +285,15 @@ public class OldFormatProjectParser : IProjectParser
 
             projectInfo.ProjectReferences.Add(projectRef);
         }
+    }
+
+    /// <summary>
+    /// Normalizes path separators for cross-platform compatibility.
+    /// Converts backslashes to the current platform's directory separator.
+    /// </summary>
+    private static string NormalizePath(string path)
+    {
+        return path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
     }
 
     private void ExtractCompileItems(XDocument doc, XNamespace ns, ProjectInfo projectInfo)
@@ -312,14 +324,15 @@ public class OldFormatProjectParser : IProjectParser
 
             var compileItem = new CompileItem
             {
-                Include = includeAttr
+                // Normalize path separators for cross-platform compatibility
+                Include = NormalizePath(includeAttr)
             };
 
             // Extract DependentUpon
             var dependentUpon = item.Element(ns + "DependentUpon")?.Value;
             if (!string.IsNullOrEmpty(dependentUpon))
             {
-                compileItem.DependentUpon = dependentUpon;
+                compileItem.DependentUpon = NormalizePath(dependentUpon);
             }
 
             // Extract SubType
@@ -348,7 +361,8 @@ public class OldFormatProjectParser : IProjectParser
 
             var contentItem = new ContentItem
             {
-                Include = includeAttr
+                // Normalize path separators for cross-platform compatibility
+                Include = NormalizePath(includeAttr)
             };
 
             // Extract CopyToOutputDirectory
@@ -376,14 +390,15 @@ public class OldFormatProjectParser : IProjectParser
 
             var embeddedResource = new EmbeddedResource
             {
-                Include = includeAttr
+                // Normalize path separators for cross-platform compatibility
+                Include = NormalizePath(includeAttr)
             };
 
             // Extract DependentUpon
             var dependentUpon = item.Element(ns + "DependentUpon")?.Value;
             if (!string.IsNullOrEmpty(dependentUpon))
             {
-                embeddedResource.DependentUpon = dependentUpon;
+                embeddedResource.DependentUpon = NormalizePath(dependentUpon);
             }
 
             // Extract Generator
@@ -397,7 +412,7 @@ public class OldFormatProjectParser : IProjectParser
             var lastGenOutput = item.Element(ns + "LastGenOutput")?.Value;
             if (!string.IsNullOrEmpty(lastGenOutput))
             {
-                embeddedResource.LastGenOutput = lastGenOutput;
+                embeddedResource.LastGenOutput = NormalizePath(lastGenOutput);
             }
 
             projectInfo.EmbeddedResources.Add(embeddedResource);
