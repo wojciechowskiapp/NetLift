@@ -20,6 +20,7 @@ Real migrations you can review:
 
 - [ContosoUniversity](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/1) - Academic sample app with students, courses, enrollments
 - [MvcMusicStore](https://github.com/wojciechowskiapp/MvcMusicStore.LegacyMigration/pull/1) - E-commerce app with shopping cart, checkout, CQRS modernization
+- [eShopModernizing](https://github.com/wojciechowskiapp/eShopModernizing.LegacyMigration/pull/1) - Microsoft's reference app, multi-project solution with catalog management
 
 ## How it works
 
