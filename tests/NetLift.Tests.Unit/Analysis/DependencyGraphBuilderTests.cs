@@ -7,17 +7,23 @@ namespace NetLift.Tests.Unit.Analysis;
 public class DependencyGraphBuilderTests
 {
     private readonly DependencyGraphBuilder _builder;
+    private readonly string _testBasePath;
 
     public DependencyGraphBuilderTests()
     {
         _builder = new DependencyGraphBuilder();
+        // Use temp directory for cross-platform compatibility
+        _testBasePath = Path.Combine(Path.GetTempPath(), "NetLiftTests");
     }
+
+    private string TestPath(string projectName) => Path.Combine(_testBasePath, projectName, $"{projectName}.csproj");
+    private string RelativeRef(string fromProject, string toProject) => Path.Combine("..", toProject, $"{toProject}.csproj");
 
     [Fact]
     public void Build_WithSingleProject_CreatesGraphWithOneNode()
     {
         // Arrange
-        var project = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj");
+        var project = CreateProject("ProjectA", TestPath("ProjectA"));
         var solution = CreateSolution("Solution", new[] { project });
 
         // Act
@@ -34,9 +40,9 @@ public class DependencyGraphBuilderTests
     public void Build_WithTwoProjectsAndDependency_CreatesEdge()
     {
         // Arrange
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj");
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"));
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB });
 
@@ -57,11 +63,11 @@ public class DependencyGraphBuilderTests
     public void Build_WithDependencies_UpdatesNodeDegrees()
     {
         // Arrange
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj");
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"));
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectC"), Name = "ProjectC" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC });
 
@@ -90,12 +96,12 @@ public class DependencyGraphBuilderTests
     public void Build_WithCircularDependency_DetectsCycle()
     {
         // Arrange - A -> B -> C -> A
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectA\\ProjectA.csproj", Name = "ProjectA" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectC"), Name = "ProjectC" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectC", "ProjectA"), Name = "ProjectA" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC });
 
@@ -114,14 +120,14 @@ public class DependencyGraphBuilderTests
     public void Build_WithMultipleCircularDependencies_DetectsAllCycles()
     {
         // Arrange - A <-> B and C <-> D
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectA\\ProjectA.csproj", Name = "ProjectA" } });
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectD\\ProjectD.csproj", Name = "ProjectD" } });
-        var projectD = CreateProject("ProjectD", "F:\\ProjectD\\ProjectD.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectA"), Name = "ProjectA" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectC", "ProjectD"), Name = "ProjectD" } });
+        var projectD = CreateProject("ProjectD", TestPath("ProjectD"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectD", "ProjectC"), Name = "ProjectC" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC, projectD });
 
@@ -137,11 +143,11 @@ public class DependencyGraphBuilderTests
     public void GetLeafProjects_ReturnsProjectsWithNoDependencies()
     {
         // Arrange
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj");
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"));
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectC"), Name = "ProjectC" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC });
         var graph = _builder.Build(solution, new List<ProjectInfo> { projectA, projectB, projectC });
@@ -158,11 +164,11 @@ public class DependencyGraphBuilderTests
     public void GetRootProjects_ReturnsProjectsWithNoIncomingDependencies()
     {
         // Arrange
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj");
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"));
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectC"), Name = "ProjectC" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC });
         var graph = _builder.Build(solution, new List<ProjectInfo> { projectA, projectB, projectC });
@@ -179,11 +185,11 @@ public class DependencyGraphBuilderTests
     public void GetMigrationOrder_WithLinearDependencies_ReturnsCorrectOrder()
     {
         // Arrange - A -> B -> C (C should be first, A should be last)
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj");
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" } });
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"));
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectC"), Name = "ProjectC" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC });
         var graph = _builder.Build(solution, new List<ProjectInfo> { projectA, projectB, projectC });
@@ -202,16 +208,16 @@ public class DependencyGraphBuilderTests
     public void GetMigrationOrder_WithDiamondDependencies_ReturnsValidTopologicalOrder()
     {
         // Arrange - Diamond: A -> B, A -> C, B -> D, C -> D
-        var projectD = CreateProject("ProjectD", "F:\\ProjectD\\ProjectD.csproj");
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectD\\ProjectD.csproj", Name = "ProjectD" } });
-        var projectC = CreateProject("ProjectC", "F:\\ProjectC\\ProjectC.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectD\\ProjectD.csproj", Name = "ProjectD" } });
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
+        var projectD = CreateProject("ProjectD", TestPath("ProjectD"));
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectD"), Name = "ProjectD" } });
+        var projectC = CreateProject("ProjectC", TestPath("ProjectC"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectC", "ProjectD"), Name = "ProjectD" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
             new[]
             {
-                new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" },
-                new ProjectReference { Path = "..\\ProjectC\\ProjectC.csproj", Name = "ProjectC" }
+                new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" },
+                new ProjectReference { Path = RelativeRef("ProjectA", "ProjectC"), Name = "ProjectC" }
             });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB, projectC, projectD });
@@ -241,10 +247,10 @@ public class DependencyGraphBuilderTests
     public void GetMigrationOrder_WithCircularDependencies_ThrowsInvalidOperationException()
     {
         // Arrange - A -> B -> A
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectA\\ProjectA.csproj", Name = "ProjectA" } });
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectB", "ProjectA"), Name = "ProjectA" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB });
         var graph = _builder.Build(solution, new List<ProjectInfo> { projectA, projectB });
@@ -264,7 +270,7 @@ public class DependencyGraphBuilderTests
             new PackageReference { Id = "AutoMapper", Version = "12.0.0" }
         };
 
-        var project = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj", packageReferences: packages);
+        var project = CreateProject("ProjectA", TestPath("ProjectA"), packageReferences: packages);
         var solution = CreateSolution("Solution", new[] { project });
 
         // Act
@@ -284,20 +290,20 @@ public class DependencyGraphBuilderTests
         // WebApp -> BusinessLogic -> DataAccess -> Common
         //                         -> Common
         //       -> Common
-        var common = CreateProject("Common", "F:\\Common\\Common.csproj");
-        var dataAccess = CreateProject("DataAccess", "F:\\DataAccess\\DataAccess.csproj",
-            new[] { new ProjectReference { Path = "..\\Common\\Common.csproj", Name = "Common" } });
-        var businessLogic = CreateProject("BusinessLogic", "F:\\BusinessLogic\\BusinessLogic.csproj",
+        var common = CreateProject("Common", TestPath("Common"));
+        var dataAccess = CreateProject("DataAccess", TestPath("DataAccess"),
+            new[] { new ProjectReference { Path = RelativeRef("DataAccess", "Common"), Name = "Common" } });
+        var businessLogic = CreateProject("BusinessLogic", TestPath("BusinessLogic"),
             new[]
             {
-                new ProjectReference { Path = "..\\DataAccess\\DataAccess.csproj", Name = "DataAccess" },
-                new ProjectReference { Path = "..\\Common\\Common.csproj", Name = "Common" }
+                new ProjectReference { Path = RelativeRef("BusinessLogic", "DataAccess"), Name = "DataAccess" },
+                new ProjectReference { Path = RelativeRef("BusinessLogic", "Common"), Name = "Common" }
             });
-        var webApp = CreateProject("WebApp", "F:\\WebApp\\WebApp.csproj",
+        var webApp = CreateProject("WebApp", TestPath("WebApp"),
             new[]
             {
-                new ProjectReference { Path = "..\\BusinessLogic\\BusinessLogic.csproj", Name = "BusinessLogic" },
-                new ProjectReference { Path = "..\\Common\\Common.csproj", Name = "Common" }
+                new ProjectReference { Path = RelativeRef("WebApp", "BusinessLogic"), Name = "BusinessLogic" },
+                new ProjectReference { Path = RelativeRef("WebApp", "Common"), Name = "Common" }
             });
 
         var solution = CreateSolution("Solution", new[] { webApp, businessLogic, dataAccess, common });
@@ -336,9 +342,9 @@ public class DependencyGraphBuilderTests
     public void DetectCircularDependencies_WithNoCycles_ReturnsEmptyList()
     {
         // Arrange
-        var projectB = CreateProject("ProjectB", "F:\\ProjectB\\ProjectB.csproj");
-        var projectA = CreateProject("ProjectA", "F:\\ProjectA\\ProjectA.csproj",
-            new[] { new ProjectReference { Path = "..\\ProjectB\\ProjectB.csproj", Name = "ProjectB" } });
+        var projectB = CreateProject("ProjectB", TestPath("ProjectB"));
+        var projectA = CreateProject("ProjectA", TestPath("ProjectA"),
+            new[] { new ProjectReference { Path = RelativeRef("ProjectA", "ProjectB"), Name = "ProjectB" } });
 
         var solution = CreateSolution("Solution", new[] { projectA, projectB });
         var graph = _builder.Build(solution, new List<ProjectInfo> { projectA, projectB });
@@ -372,7 +378,7 @@ public class DependencyGraphBuilderTests
         return new SolutionInfo
         {
             Name = name,
-            FilePath = $"F:\\{name}\\{name}.sln"
+            FilePath = Path.Combine(_testBasePath, name, $"{name}.sln")
         };
     }
 }

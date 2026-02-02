@@ -160,7 +160,9 @@ public class DependencyGraphBuilder : IDependencyGraphBuilder
     private string ResolveProjectPath(string baseProjectPath, string referencePath)
     {
         var baseDir = Path.GetDirectoryName(baseProjectPath) ?? string.Empty;
-        var fullPath = Path.Combine(baseDir, referencePath);
+        // Normalize path separators for cross-platform compatibility
+        var normalizedReferencePath = referencePath.Replace('\\', Path.DirectorySeparatorChar);
+        var fullPath = Path.Combine(baseDir, normalizedReferencePath);
         return Path.GetFullPath(fullPath);
     }
 
@@ -169,6 +171,8 @@ public class DependencyGraphBuilder : IDependencyGraphBuilder
     /// </summary>
     private string NormalizePath(string path)
     {
-        return Path.GetFullPath(path).Replace('/', '\\');
+        // Normalize path separators for cross-platform compatibility before GetFullPath
+        var normalizedPath = path.Replace('\\', Path.DirectorySeparatorChar).Replace('/', Path.DirectorySeparatorChar);
+        return Path.GetFullPath(normalizedPath);
     }
 }

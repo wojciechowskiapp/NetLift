@@ -112,7 +112,9 @@ public class ProjectReferenceConverter : IProjectReferenceConverter
     private string ResolveRelativePath(string basePath, string relativePath)
     {
         var baseDir = System.IO.Path.GetDirectoryName(basePath) ?? string.Empty;
-        var combined = System.IO.Path.Combine(baseDir, relativePath);
+        // Normalize path separators for cross-platform compatibility
+        var normalizedRelativePath = relativePath.Replace('\\', System.IO.Path.DirectorySeparatorChar);
+        var combined = System.IO.Path.Combine(baseDir, normalizedRelativePath);
         return System.IO.Path.GetFullPath(combined);
     }
 

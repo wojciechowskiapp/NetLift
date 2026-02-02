@@ -994,23 +994,27 @@ namespace TestApp.Controllers
     [Fact]
     public async Task AnalyzeProjectAsync_MultipleControllers_AllDetected()
     {
-        // Arrange
+        // Arrange - use temp directory for cross-platform compatibility
+        var tempDir = Path.Combine(Path.GetTempPath(), $"NetLiftTest_{Guid.NewGuid()}");
+        var projectPath = Path.Combine(tempDir, "TestApp.csproj");
+
         var projectInfo = new ProjectInfo
         {
-            FilePath = @"F:\src\TestApp\TestApp.csproj",
+            FilePath = projectPath,
             Name = "TestApp",
             CompileItems = new List<CompileItem>
             {
-                new() { Include = @"Controllers\HomeController.cs" },
-                new() { Include = @"Controllers\ProductsController.cs" }
+                new() { Include = Path.Combine("Controllers", "HomeController.cs") },
+                new() { Include = Path.Combine("Controllers", "ProductsController.cs") }
             }
         };
 
         // Create temporary controller files
-        var homeControllerPath = Path.Combine(Path.GetDirectoryName(projectInfo.FilePath)!, "Controllers", "HomeController.cs");
-        var productsControllerPath = Path.Combine(Path.GetDirectoryName(projectInfo.FilePath)!, "Controllers", "ProductsController.cs");
+        var controllersDir = Path.Combine(tempDir, "Controllers");
+        var homeControllerPath = Path.Combine(controllersDir, "HomeController.cs");
+        var productsControllerPath = Path.Combine(controllersDir, "ProductsController.cs");
 
-        Directory.CreateDirectory(Path.GetDirectoryName(homeControllerPath)!);
+        Directory.CreateDirectory(controllersDir);
 
         await File.WriteAllTextAsync(homeControllerPath, @"
 using System.Web.Mvc;
@@ -1045,10 +1049,8 @@ namespace TestApp.Controllers
         finally
         {
             // Cleanup
-            if (File.Exists(homeControllerPath)) File.Delete(homeControllerPath);
-            if (File.Exists(productsControllerPath)) File.Delete(productsControllerPath);
-            if (Directory.Exists(Path.GetDirectoryName(homeControllerPath)))
-                Directory.Delete(Path.GetDirectoryName(homeControllerPath)!, true);
+            if (Directory.Exists(tempDir))
+                Directory.Delete(tempDir, true);
         }
     }
 
