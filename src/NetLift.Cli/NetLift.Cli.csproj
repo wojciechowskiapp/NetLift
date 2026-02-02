@@ -14,6 +14,10 @@
     <ProjectReference Include="..\NetLift.Git\NetLift.Git.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="..\..\LICENSE" Pack="true" PackagePath="" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
@@ -26,7 +30,7 @@
     <Authors>Michał Wojciechowski</Authors>
     <Description>CLI tool for automated migration of .NET Framework applications to .NET 8+. Supports MVC5, EF6, WCF, and web.config transformations.</Description>
     <PackageTags>dotnet;migration;netframework;aspnetcore;mvc;ef6;efcore;wcf;grpc</PackageTags>
-    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
     <RepositoryUrl>https://github.com/wojciechowskiapp/NetLift</RepositoryUrl>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>netlift</ToolCommandName>
