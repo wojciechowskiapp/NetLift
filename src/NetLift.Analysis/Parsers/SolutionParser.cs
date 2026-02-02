@@ -56,6 +56,9 @@ public partial class SolutionParser : ISolutionParser
         ParseConfigurations(content, solutionInfo);
         ParseNestedProjects(content, solutionInfo);
 
+        // Enhance project type detection for SDK-style projects
+        EnhanceProjectTypeDetection(solutionInfo);
+
         return solutionInfo;
     }
 
@@ -226,5 +229,61 @@ public partial class SolutionParser : ISolutionParser
         }
 
         return content.Substring(startIndex + sectionHeader.Length, endIndex - startIndex - sectionHeader.Length);
+    }
+
+    /// <summary>
+    /// Enhances project type detection for SDK-style projects by reading the actual .csproj files.
+    /// This is needed because SDK-style projects use a generic GUID in the solution file.
+    /// </summary>
+    private void EnhanceProjectTypeDetection(SolutionInfo solutionInfo)
+    {
+        foreach (var project in solutionInfo.Projects)
+        {
+            // Skip if already detected as a specific type (not ClassLibrary or Unknown)
+            if (project.DetectedType != ProjectType.CSharpClassLibrary &&
+                project.DetectedType != ProjectType.Unknown)
+            {
+                continue;
+            }
+
+            // Skip non-C# projects
+            if (!project.AbsolutePath.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            // Check if file exists
+            if (!File.Exists(project.AbsolutePath))
+            {
+                continue;
+            }
+
+            try
+            {
+                // Read first few lines to detect SDK type
+                var content = File.ReadAllText(project.AbsolutePath);
+
+                // Check for SDK-style web project
+                if (content.Contains("Microsoft.NET.Sdk.Web", StringComparison.OrdinalIgnoreCase) ||
+                    content.Contains("Sdk=\"Microsoft.NET.Sdk.Web\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    project.DetectedType = ProjectType.AspNetCore;
+                }
+                // Check for Blazor WebAssembly
+                else if (content.Contains("Microsoft.NET.Sdk.BlazorWebAssembly", StringComparison.OrdinalIgnoreCase))
+                {
+                    project.DetectedType = ProjectType.AspNetCore;
+                }
+                // Check for Worker Service
+                else if (content.Contains("Microsoft.NET.Sdk.Worker", StringComparison.OrdinalIgnoreCase))
+                {
+                    // Keep as class library for now
+                }
+            }
+            catch
+            {
+                // Ignore errors reading project file
+            }
+        }
     }
 }

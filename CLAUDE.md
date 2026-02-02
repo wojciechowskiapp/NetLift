@@ -12,20 +12,21 @@ NetLift is a CLI tool for automated migration of .NET Framework → .NET 8+.
 - web.config → appsettings.json + Program.cs
 - WCF → gRPC or REST API (service/data contracts)
 
-**Out of Scope (MVP):** WebForms, WPF, WinForms, Architecture modernization
+**Out of Scope (MVP):** WebForms, WPF, WinForms
 
-**Post-MVP (planned):** `netlift modernize` command for CQRS, Clean Architecture, layer separation (requires further analysis - see `.plan/MASTER.md`)
+**Post-MVP (implemented):** `netlift modernize` command for CQRS, Clean Architecture, FluentValidation, Auth Modernization, Observability (see `.plan/MODERNIZE.md`)
 
 ## Commands
 
 ```bash
 dotnet build                                    # Build solution
-dotnet test                                     # Run all 1213 tests
+dotnet test                                     # Run all 1567 tests
 dotnet test --filter "FullyQualifiedName~Name" # Run specific tests
 
 # CLI usage
 dotnet run --project src/NetLift.Cli -- analyze MySolution.sln --html
 dotnet run --project src/NetLift.Cli -- migrate MySolution.sln --dry-run --interactive
+dotnet run --project src/NetLift.Cli -- modernize MySolution.sln --pattern cqrs --dry-run
 ```
 
 ## Architecture
@@ -53,8 +54,12 @@ DI registration in `src/NetLift.Cli/Program.cs`.
 | 5 | Entity Framework | 8 | ✅ Done |
 | 6 | WCF → gRPC/REST | 10 | ✅ Done |
 | 7 | Validation & E2E | 6 | ✅ Done |
+| 8 | Modernize Foundation | 12 | ✅ Done |
+| 9 | CQRS Generators | 8 | ✅ Done |
+| 10 | Clean Architecture | 6 | ✅ Done |
+| 11 | Logic Extraction + Auth/Observability | 12 | ✅ Done |
 
-**MVP Complete:** 66/66 tasks, 1213 tests passing.
+**MVP Complete:** 66/66 tasks, **Modernize Complete:** 38/38 tasks, **Total:** 1567 tests passing.
 
 ## Confidence Scoring
 

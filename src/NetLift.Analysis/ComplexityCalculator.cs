@@ -7,6 +7,38 @@ namespace NetLift.Analysis;
 /// </summary>
 public class ComplexityCalculator
 {
+    // Technology complexity scores
+    private const int MvcComplexityScore = 20;
+    private const int WebApiComplexityScore = 15;
+    private const int WcfComplexityScore = 35;
+    private const int Ef6ComplexityScore = 15;
+    private const int WebFormsComplexityScore = 25;
+    private const int WinFormsComplexityScore = 10;
+    private const int WpfComplexityScore = 8;
+
+    // Package compatibility scores (per package)
+    private const int IncompatiblePackageScore = 5;
+    private const int ReplacementPackageScore = 3;
+    private const int DeprecatedPackageScore = 4;
+
+    // Size thresholds
+    private const int LargeCodebaseThreshold = 50000;
+    private const int MediumCodebaseThreshold = 20000;
+    private const int LargeCodebaseScore = 10;
+    private const int MediumCodebaseScore = 5;
+
+    // Dependency count thresholds
+    private const int HighDependencyThreshold = 50;
+    private const int ModerateDependencyThreshold = 25;
+    private const int HighDependencyScore = 8;
+    private const int ModerateDependencyScore = 4;
+
+    // Complexity level boundaries
+    private const int LowComplexityThreshold = 25;
+    private const int MediumComplexityThreshold = 50;
+    private const int HighComplexityThreshold = 75;
+    private const int MaxComplexityScore = 100;
+
     /// <summary>
     /// Calculates the migration complexity for a project.
     /// </summary>
@@ -20,25 +52,25 @@ public class ComplexityCalculator
         // Base complexity by type
         if (project.IsMvc)
         {
-            score += 20;
+            score += MvcComplexityScore;
             factors.Add("ASP.NET MVC");
         }
 
         if (project.IsWebApi)
         {
-            score += 15;
+            score += WebApiComplexityScore;
             factors.Add("ASP.NET Web API");
         }
 
         if (project.IsWcfService)
         {
-            score += 35;
+            score += WcfComplexityScore;
             factors.Add("WCF Service");
         }
 
         if (project.UsesEf6)
         {
-            score += 15;
+            score += Ef6ComplexityScore;
             factors.Add("Entity Framework 6");
         }
 
@@ -47,7 +79,7 @@ public class ComplexityCalculator
             .Count(d => d.Compatibility == PackageCompatibility.Incompatible);
         if (incompatible > 0)
         {
-            score += incompatible * 5;
+            score += incompatible * IncompatiblePackageScore;
             factors.Add($"{incompatible} incompatible package{(incompatible > 1 ? "s" : "")}");
         }
 
@@ -56,7 +88,7 @@ public class ComplexityCalculator
             .Count(d => d.Compatibility == PackageCompatibility.HasReplacement);
         if (needsReplacement > 0)
         {
-            score += needsReplacement * 3;
+            score += needsReplacement * ReplacementPackageScore;
             factors.Add($"{needsReplacement} package{(needsReplacement > 1 ? "s" : "")} requiring replacement");
         }
 
@@ -65,54 +97,54 @@ public class ComplexityCalculator
             .Count(d => d.Compatibility == PackageCompatibility.Deprecated);
         if (deprecated > 0)
         {
-            score += deprecated * 4;
+            score += deprecated * DeprecatedPackageScore;
             factors.Add($"{deprecated} deprecated package{(deprecated > 1 ? "s" : "")}");
         }
 
         // Size factor
-        if (project.EstimatedLinesOfCode > 50000)
+        if (project.EstimatedLinesOfCode > LargeCodebaseThreshold)
         {
-            score += 10;
-            factors.Add("Large codebase (>50k LOC)");
+            score += LargeCodebaseScore;
+            factors.Add($"Large codebase (>{LargeCodebaseThreshold / 1000}k LOC)");
         }
-        else if (project.EstimatedLinesOfCode > 20000)
+        else if (project.EstimatedLinesOfCode > MediumCodebaseThreshold)
         {
-            score += 5;
-            factors.Add("Medium codebase (>20k LOC)");
+            score += MediumCodebaseScore;
+            factors.Add($"Medium codebase (>{MediumCodebaseThreshold / 1000}k LOC)");
         }
 
         // High dependency count
-        if (project.DependencyCount > 50)
+        if (project.DependencyCount > HighDependencyThreshold)
         {
-            score += 8;
-            factors.Add("High dependency count (>50)");
+            score += HighDependencyScore;
+            factors.Add($"High dependency count (>{HighDependencyThreshold})");
         }
-        else if (project.DependencyCount > 25)
+        else if (project.DependencyCount > ModerateDependencyThreshold)
         {
-            score += 4;
-            factors.Add("Moderate dependency count (>25)");
+            score += ModerateDependencyScore;
+            factors.Add($"Moderate dependency count (>{ModerateDependencyThreshold})");
         }
 
         // Legacy project types
         switch (project.PrimaryType)
         {
             case ProjectType.AspNetWebForms:
-                score += 25;
+                score += WebFormsComplexityScore;
                 factors.Add("ASP.NET Web Forms");
                 break;
             case ProjectType.CSharpWinForms:
-                score += 10;
+                score += WinFormsComplexityScore;
                 factors.Add("Windows Forms");
                 break;
             case ProjectType.CSharpWpf:
-                score += 8;
+                score += WpfComplexityScore;
                 factors.Add("WPF");
                 break;
         }
 
         return new MigrationComplexity
         {
-            Score = Math.Min(score, 100),
+            Score = Math.Min(score, MaxComplexityScore),
             Level = ScoreToLevel(score),
             Factors = factors
         };
@@ -189,7 +221,7 @@ public class ComplexityCalculator
 
         return new MigrationComplexity
         {
-            Score = Math.Min(overallScore, 100),
+            Score = Math.Min(overallScore, MaxComplexityScore),
             Level = ScoreToLevel(overallScore),
             Factors = factors
         };
@@ -204,9 +236,9 @@ public class ComplexityCalculator
     {
         return score switch
         {
-            <= 25 => ComplexityLevel.Low,
-            <= 50 => ComplexityLevel.Medium,
-            <= 75 => ComplexityLevel.High,
+            <= LowComplexityThreshold => ComplexityLevel.Low,
+            <= MediumComplexityThreshold => ComplexityLevel.Medium,
+            <= HighComplexityThreshold => ComplexityLevel.High,
             _ => ComplexityLevel.VeryHigh
         };
     }

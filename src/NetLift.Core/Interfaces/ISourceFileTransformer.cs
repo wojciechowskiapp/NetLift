@@ -26,6 +26,14 @@ public interface ISourceFileTransformer
     /// <param name="sourceCode">The C# source code to analyze.</param>
     /// <returns>The detected file type.</returns>
     SourceFileType DetectFileType(string sourceCode);
+
+    /// <summary>
+    /// Sets the known DbContext type names detected from project analysis.
+    /// When set, the transformer uses exact type matching instead of pattern matching for DbContext detection.
+    /// This improves accuracy for controllers that reference DbContext with non-standard names.
+    /// </summary>
+    /// <param name="knownDbContextTypes">Set of DbContext class names (e.g., "MusicStoreEntities", "ApplicationDbContext").</param>
+    void SetKnownDbContextTypes(ISet<string>? knownDbContextTypes);
 }
 
 /// <summary>

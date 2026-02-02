@@ -91,8 +91,19 @@ public class SdkProjectConverter : ISdkProjectConverter
             }
         }
 
-        // Placeholder for PackageReferences (TASK-017)
-        // Placeholder for Content items (TASK-020)
+        // Add PackageReferences based on detected dependencies
+        var packageRefs = CreatePackageReferences(projectInfo, framework, sdkType);
+        if (packageRefs != null)
+        {
+            root.Add(packageRefs);
+        }
+
+        // Add Compile Remove for incompatible legacy files
+        var compileRemoves = CreateCompileRemoves(projectInfo);
+        if (compileRemoves != null)
+        {
+            root.Add(compileRemoves);
+        }
 
         return doc;
     }
@@ -251,6 +262,179 @@ public class SdkProjectConverter : ISdkProjectConverter
         if (hasWinForms)
         {
             propertyGroup.Add(new XElement("UseWindowsForms", "true"));
+        }
+    }
+
+    /// <summary>
+    /// Creates PackageReferences based on detected assembly references.
+    /// Only adds packages that aren't already in packages.config (to avoid duplicates).
+    /// </summary>
+    private XElement? CreatePackageReferences(ProjectInfo projectInfo, string framework, string sdkType)
+    {
+        var packages = new List<(string Id, string Version)>();
+
+        // Helper to check if a package is already referenced in packages.config
+        bool HasPackageConfig(string packageId) => projectInfo.PackageReferences.Any(p =>
+            p.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+
+        // Detect Entity Framework and add EF Core
+        // Only if EF Core isn't already in packages.config
+        var hasEf6 = projectInfo.References.Any(r =>
+            r.Name.Equals("EntityFramework", StringComparison.OrdinalIgnoreCase) ||
+            r.Name.StartsWith("EntityFramework.", StringComparison.OrdinalIgnoreCase));
+
+        if (hasEf6 && !HasPackageConfig("Microsoft.EntityFrameworkCore"))
+        {
+            var efVersion = GetEfCoreVersion(framework);
+            packages.Add(("Microsoft.EntityFrameworkCore", efVersion));
+            packages.Add(("Microsoft.EntityFrameworkCore.SqlServer", efVersion));
+            packages.Add(("Microsoft.EntityFrameworkCore.Tools", efVersion));
+        }
+
+        // Detect PagedList and add X.PagedList (ASP.NET Core compatible)
+        var hasPagedList = projectInfo.References.Any(r =>
+            r.Name.Equals("PagedList", StringComparison.OrdinalIgnoreCase) ||
+            r.Name.Equals("PagedList.Mvc", StringComparison.OrdinalIgnoreCase));
+
+        if (hasPagedList && !HasPackageConfig("X.PagedList.Mvc.Core"))
+        {
+            packages.Add(("X.PagedList.Mvc.Core", "9.1.2"));
+        }
+
+        // Add Newtonsoft.Json if referenced (common in MVC projects)
+        // Only if not already in packages.config
+        var hasNewtonsoft = projectInfo.References.Any(r =>
+            r.Name.StartsWith("Newtonsoft.Json", StringComparison.OrdinalIgnoreCase));
+
+        if (hasNewtonsoft && !HasPackageConfig("Newtonsoft.Json"))
+        {
+            packages.Add(("Newtonsoft.Json", "13.0.3"));
+        }
+
+        if (packages.Count == 0)
+        {
+            return null;
+        }
+
+        var itemGroup = new XElement("ItemGroup");
+        foreach (var (id, version) in packages)
+        {
+            itemGroup.Add(new XElement("PackageReference",
+                new XAttribute("Include", id),
+                new XAttribute("Version", version)));
+        }
+
+        return itemGroup;
+    }
+
+    /// <summary>
+    /// Gets the appropriate EF Core version for the target framework.
+    /// </summary>
+    private static string GetEfCoreVersion(string framework)
+    {
+        return framework switch
+        {
+            "net9.0" => "9.0.0",
+            "net8.0" => "8.0.0",
+            "net7.0" => "7.0.0",
+            "net6.0" => "6.0.0",
+            _ => "8.0.0"
+        };
+    }
+
+    /// <summary>
+    /// Creates Compile Remove elements for incompatible legacy files.
+    /// SDK-style projects use implicit globbing, so these files would otherwise be included.
+    /// </summary>
+    private XElement? CreateCompileRemoves(ProjectInfo projectInfo)
+    {
+        var removes = new List<string>();
+
+        // Always exclude legacy ASP.NET files that cause build errors
+        removes.Add("App_Start\\**\\*.cs");
+        removes.Add("Global.asax.cs");
+
+        // Exclude Properties folder (contains AssemblyInfo.cs which conflicts with SDK auto-generation)
+        removes.Add("Properties\\AssemblyInfo.cs");
+
+        // Exclude EF6 Migrations if present (incompatible with EF Core)
+        removes.Add("Migrations\\**\\*.cs");
+
+        // Exclude EF6 Interceptors (require manual rewrite - EF Core has completely different API)
+        // EF6 IDbCommandInterceptor -> EF Core IInterceptor (different method signatures)
+        foreach (var compileItem in projectInfo.CompileItems)
+        {
+            var fileName = Path.GetFileName(compileItem.Include);
+            if (fileName.Contains("Interceptor", StringComparison.OrdinalIgnoreCase) &&
+                !fileName.Contains("EfCore", StringComparison.OrdinalIgnoreCase))
+            {
+                removes.Add(compileItem.Include);
+            }
+        }
+
+        // Exclude database initializers (EF6 specific, replaced by migrations in EF Core)
+        foreach (var compileItem in projectInfo.CompileItems)
+        {
+            var fileName = Path.GetFileName(compileItem.Include);
+            if (fileName.Contains("Initializer", StringComparison.OrdinalIgnoreCase))
+            {
+                removes.Add(compileItem.Include);
+            }
+        }
+
+        // Exclude DbConfiguration files (EF6 specific, no equivalent in EF Core)
+        // Scan source files for classes inheriting from DbConfiguration
+        var projectDirectory = Path.GetDirectoryName(projectInfo.FilePath);
+        if (!string.IsNullOrEmpty(projectDirectory))
+        {
+            foreach (var compileItem in projectInfo.CompileItems)
+            {
+                var sourceFilePath = Path.Combine(projectDirectory, compileItem.Include);
+                if (File.Exists(sourceFilePath) && IsDbConfigurationFile(sourceFilePath))
+                {
+                    removes.Add(compileItem.Include);
+                }
+            }
+        }
+
+        if (removes.Count == 0)
+        {
+            return null;
+        }
+
+        var itemGroup = new XElement("ItemGroup");
+        foreach (var pattern in removes.Distinct())
+        {
+            itemGroup.Add(new XElement("Compile",
+                new XAttribute("Remove", pattern)));
+        }
+
+        return itemGroup;
+    }
+
+    /// <summary>
+    /// Checks if a source file contains a class inheriting from DbConfiguration.
+    /// </summary>
+    /// <param name="filePath">The path to the source file.</param>
+    /// <returns>True if the file contains a DbConfiguration class; otherwise, false.</returns>
+    private static bool IsDbConfigurationFile(string filePath)
+    {
+        try
+        {
+            var content = File.ReadAllText(filePath);
+
+            // Look for class inheritance patterns:
+            // - class Name : DbConfiguration
+            // - class Name: DbConfiguration
+            // - class Name :DbConfiguration
+            // - class Name:DbConfiguration
+            return content.Contains(": DbConfiguration", StringComparison.Ordinal) ||
+                   content.Contains(":DbConfiguration", StringComparison.Ordinal);
+        }
+        catch
+        {
+            // If we can't read the file, don't exclude it
+            return false;
         }
     }
 }

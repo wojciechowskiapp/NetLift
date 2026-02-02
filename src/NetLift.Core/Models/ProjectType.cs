@@ -73,5 +73,10 @@ public enum ProjectType
     /// <summary>
     /// WCF client project.
     /// </summary>
-    WcfClient
+    WcfClient,
+
+    /// <summary>
+    /// ASP.NET Core MVC/API project (SDK-style with Microsoft.NET.Sdk.Web).
+    /// </summary>
+    AspNetCore
 }

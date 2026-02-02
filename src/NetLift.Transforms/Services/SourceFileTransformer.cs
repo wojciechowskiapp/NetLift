@@ -13,6 +13,7 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
 {
     private readonly IMvcNamespaceRewriter _mvcNamespaceRewriter;
     private readonly IControllerBaseRewriter _controllerBaseRewriter;
+    private readonly IControllerMethodBodyRewriter _controllerMethodBodyRewriter;
     private readonly IActionResultRewriter _actionResultRewriter;
     private readonly IHttpContextRewriter _httpContextRewriter;
     private readonly IAttributeRoutingTransformer _attributeRoutingTransformer;
@@ -25,9 +26,12 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
     private readonly ILazyLoadingConfigRewriter _lazyLoadingConfigRewriter;
     private readonly IDatabaseInitializerRemover _databaseInitializerRemover;
 
+    private ISet<string>? _knownDbContextTypes;
+
     public SourceFileTransformer(
         IMvcNamespaceRewriter mvcNamespaceRewriter,
         IControllerBaseRewriter controllerBaseRewriter,
+        IControllerMethodBodyRewriter controllerMethodBodyRewriter,
         IActionResultRewriter actionResultRewriter,
         IHttpContextRewriter httpContextRewriter,
         IAttributeRoutingTransformer attributeRoutingTransformer,
@@ -42,6 +46,7 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
     {
         _mvcNamespaceRewriter = mvcNamespaceRewriter;
         _controllerBaseRewriter = controllerBaseRewriter;
+        _controllerMethodBodyRewriter = controllerMethodBodyRewriter;
         _actionResultRewriter = actionResultRewriter;
         _httpContextRewriter = httpContextRewriter;
         _attributeRoutingTransformer = attributeRoutingTransformer;
@@ -53,6 +58,12 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
         _sqlQueryRewriter = sqlQueryRewriter;
         _lazyLoadingConfigRewriter = lazyLoadingConfigRewriter;
         _databaseInitializerRemover = databaseInitializerRemover;
+    }
+
+    /// <inheritdoc />
+    public void SetKnownDbContextTypes(ISet<string>? knownDbContextTypes)
+    {
+        _knownDbContextTypes = knownDbContextTypes;
     }
 
     /// <inheritdoc />
@@ -117,9 +128,14 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
 
             return SourceFileType.Unknown;
         }
-        catch (Exception)
+        catch (ArgumentException)
         {
-            // If parsing fails, treat as unknown
+            // Invalid source code syntax - treat as unknown
+            return SourceFileType.Unknown;
+        }
+        catch (InvalidOperationException)
+        {
+            // Roslyn parsing issue - treat as unknown
             return SourceFileType.Unknown;
         }
     }
@@ -202,7 +218,17 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
             confidenceScores,
             filePath);
 
-        // 4. HttpContext rewriting
+        // 4. Controller method body rewriting (storeDB→_context, TryUpdateModel, FormCollection, auth)
+        current = ApplyRewriter(
+            current,
+            _controllerMethodBodyRewriter,
+            "ControllerMethodBodyRewriter",
+            transformers,
+            diagnostics,
+            confidenceScores,
+            filePath);
+
+        // 5. HttpContext rewriting
         current = ApplyRewriter(
             current,
             _httpContextRewriter,
@@ -212,7 +238,7 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
             confidenceScores,
             filePath);
 
-        // 5. Attribute routing transformation
+        // 6. Attribute routing transformation
         current = ApplyRewriter(
             current,
             _attributeRoutingTransformer,
@@ -231,6 +257,16 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
         var diagnostics = new List<MigrationDiagnostic>();
         var confidenceScores = new List<int>();
         var current = sourceCode;
+
+        // 0. First apply namespace rewriting (System.Data.Entity → Microsoft.EntityFrameworkCore)
+        current = ApplyRewriter(
+            current,
+            _mvcNamespaceRewriter,
+            "EfNamespaceRewriter",
+            transformers,
+            diagnostics,
+            confidenceScores,
+            filePath);
 
         // 1. DbContext constructor rewriting
         current = ApplyRewriter(
@@ -378,24 +414,45 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
     {
         try
         {
-            // Use reflection to call Rewrite method (all rewriters have this)
-            var rewriteMethod = rewriter.GetType().GetMethod("Rewrite");
-            if (rewriteMethod == null)
-            {
-                return sourceCode;
-            }
-
-            // Determine parameters - some rewriters take optional parameters
             string transformed;
-            var parameters = rewriteMethod.GetParameters();
-            if (parameters.Length == 1)
+
+            // Special handling for ControllerMethodBodyRewriter to pass known DbContext types
+            if (rewriter is IControllerMethodBodyRewriter methodBodyRewriter)
             {
-                transformed = (string)rewriteMethod.Invoke(rewriter, new object[] { sourceCode })!;
+                transformed = methodBodyRewriter.Rewrite(sourceCode, _knownDbContextTypes);
             }
             else
             {
-                // For rewriters with optional parameters (like AttributeRoutingTransformer), pass null for routes
-                transformed = (string)rewriteMethod.Invoke(rewriter, new object?[] { sourceCode, null })!;
+                // Find the best Rewrite method - prefer single-parameter version to avoid ambiguity
+                var rewriterType = rewriter.GetType();
+                var rewriteMethods = rewriterType.GetMethods()
+                    .Where(m => m.Name == "Rewrite" && m.GetParameters().Length >= 1)
+                    .OrderBy(m => m.GetParameters().Length)
+                    .ToList();
+
+                var rewriteMethod = rewriteMethods.FirstOrDefault();
+                if (rewriteMethod == null)
+                {
+                    return sourceCode;
+                }
+
+                // Determine parameters - some rewriters take optional parameters
+                var parameters = rewriteMethod.GetParameters();
+                if (parameters.Length == 1)
+                {
+                    transformed = (string)rewriteMethod.Invoke(rewriter, new object[] { sourceCode })!;
+                }
+                else
+                {
+                    // For rewriters with optional parameters, pass null for additional params
+                    var args = new object?[parameters.Length];
+                    args[0] = sourceCode;
+                    for (var i = 1; i < parameters.Length; i++)
+                    {
+                        args[i] = null;
+                    }
+                    transformed = (string)rewriteMethod.Invoke(rewriter, args)!;
+                }
             }
 
             // Only track if actually changed

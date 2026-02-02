@@ -19,6 +19,11 @@ using NetLift.Transforms.Wcf.Parsers;
 using NetLift.Transforms.Wcf.Analyzers;
 using NetLift.Transforms.Wcf.Generators;
 using NetLift.Transforms.Services;
+using NetLift.Transforms.Modernization;
+using NetLift.Transforms.Modernization.Analyzers;
+using NetLift.Transforms.Modernization.Generators;
+using NetLift.Transforms.Modernization.Transformers;
+using NetLift.Core.Interfaces.Modernization;
 using NetLift.Validation;
 using Spectre.Console.Cli;
 
@@ -27,7 +32,8 @@ var services = new ServiceCollection();
 
 // Register parsers
 services.AddSingleton<ISolutionParser, SolutionParser>();
-services.AddSingleton<IProjectParser, OldFormatProjectParser>();
+// Use CompositeProjectParser to handle both old-format and SDK-style projects
+services.AddSingleton<IProjectParser, CompositeProjectParser>();
 services.AddSingleton<IPackagesConfigParser, PackagesConfigParser>();
 services.AddSingleton<IWebConfigAppSettingsParser, WebConfigAppSettingsParser>();
 services.AddSingleton<IWebConfigConnectionStringParser, WebConfigConnectionStringParser>();
@@ -50,6 +56,7 @@ services.AddSingleton<IConfigMigrationService, ConfigMigrationService>();
 // Register MVC rewriters
 services.AddSingleton<IMvcNamespaceRewriter, SystemWebMvcNamespaceRewriter>();
 services.AddSingleton<IControllerBaseRewriter, ControllerBaseClassRewriter>();
+services.AddSingleton<IControllerMethodBodyRewriter, ControllerMethodBodyRewriter>();
 services.AddSingleton<IActionResultRewriter, ActionResultTypeRewriter>();
 services.AddSingleton<IHttpContextRewriter, HttpContextCurrentRewriter>();
 services.AddSingleton<IActionFilterTransformer, ActionFilterTransformer>();
@@ -63,6 +70,7 @@ services.AddSingleton<IBundleConfigParser, BundleConfigParser>();
 // Register MVC transformers
 services.AddSingleton<IAreaMigrationTransformer, AreaMigrationTransformer>();
 services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
+services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
 
 // Register WCF parsers, analyzers, and generators
 services.AddSingleton<IWcfServiceParser, WcfServiceParser>();
@@ -96,6 +104,12 @@ services.AddSingleton<IAppSettingsJsonGenerator, AppSettingsJsonGenerator>();
 services.AddSingleton<IEnvironmentAppSettingsGenerator, EnvironmentAppSettingsGenerator>();
 services.AddSingleton<IProgramCsGenerator, ProgramCsGenerator>();
 
+// Register CQRS generators
+services.AddSingleton<ICommandGenerator, CommandGenerator>();
+services.AddSingleton<IQueryGenerator, QueryGenerator>();
+services.AddSingleton<IHandlerGenerator, HandlerGenerator>();
+services.AddSingleton<IValidatorGenerator, ValidatorGenerator>();
+
 // Register report generators
 services.AddSingleton<IHtmlReportGenerator, HtmlReportGenerator>();
 services.AddSingleton<IFullHtmlReportGenerator, FullHtmlReportGenerator>();
@@ -118,9 +132,21 @@ services.AddSingleton<IDryRunService, DryRunService>();
 // Register orchestrator
 services.AddSingleton<IMigrationOrchestrator, MigrationOrchestrator>();
 
+// Register modernization services
+services.AddSingleton<IControllerAnalyzer, ControllerAnalyzer>();
+services.AddSingleton<IServiceAnalyzer, ServiceAnalyzer>();
+services.AddSingleton<ILogicExtractor, LogicExtractor>();
+services.AddSingleton<IControllerTransformer, ControllerSlimmer>();
+services.AddSingleton<ILoggingAnalyzer, LoggingAnalyzer>();
+services.AddSingleton<IObservabilityGenerator, ObservabilityGenerator>();
+services.AddSingleton<IAuthenticationAnalyzer, AuthenticationAnalyzer>();
+services.AddSingleton<IAuthenticationGenerator, AuthenticationGenerator>();
+services.AddSingleton<IModernizationOrchestrator, ModernizationOrchestrator>();
+
 // Register commands
 services.AddSingleton<AnalyzeCommand>();
 services.AddSingleton<MigrateCommand>();
+services.AddSingleton<ModernizeCommand>();
 services.AddSingleton<ValidateCommand>();
 
 var registrar = new TypeRegistrar(services);
@@ -143,6 +169,14 @@ app.Configure(config =>
         .WithExample(new[] { "migrate", "MySolution.sln", "--target", "net9.0" })
         .WithExample(new[] { "migrate", "MySolution.sln", "--dry-run" })
         .WithExample(new[] { "migrate", "MySolution.sln", "--interactive" });
+
+    config.AddCommand<ModernizeCommand>("modernize")
+        .WithDescription("Modernize to Clean Architecture with CQRS")
+        .WithExample(new[] { "modernize", "MySolution.sln" })
+        .WithExample(new[] { "modernize", "MySolution.sln", "--pattern", "cqrs" })
+        .WithExample(new[] { "modernize", "MyProject.csproj", "--analyze-only" })
+        .WithExample(new[] { "modernize", "MySolution.sln", "--pattern", "cqrs", "--pattern", "fluentvalidation" })
+        .WithExample(new[] { "modernize", "MySolution.sln", "--dry-run", "--interactive" });
 
     config.AddCommand<ValidateCommand>("validate")
         .WithDescription("Validate a migrated solution")
