@@ -71,7 +71,3 @@ dotnet test
 ```
 
 1567 tests, all passing.
-
-## License
-
-MIT

@@ -391,6 +391,35 @@ public sealed class DbContextConstructorRewriter : CSharpSyntaxRewriter, IDbCont
     }
 
     /// <summary>
+    /// Visits identifier names to rename EF6-specific types to EF Core equivalents.
+    /// Example: DbModelBuilder → ModelBuilder
+    /// </summary>
+    public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+    {
+        var visited = (IdentifierNameSyntax?)base.VisitIdentifierName(node);
+        if (visited == null)
+        {
+            return null;
+        }
+
+        // Rename DbModelBuilder → ModelBuilder
+        if (visited.Identifier.Text == "DbModelBuilder")
+        {
+            _diagnostics.Add(new RewriterDiagnostic(
+                "Renamed DbModelBuilder to ModelBuilder for EF Core compatibility",
+                RewriterDiagnosticSeverity.Info));
+
+            return SyntaxFactory.IdentifierName("ModelBuilder")
+                .WithTriviaFrom(visited);
+        }
+
+        // Rename PluralizingTableNameConvention → (removed - EF Core doesn't have this)
+        // Note: This is handled by removing the convention code, not renaming
+
+        return visited;
+    }
+
+    /// <summary>
     /// Adds required using directives that were identified during rewriting.
     /// </summary>
     private SyntaxNode AddRequiredUsings(SyntaxNode root)

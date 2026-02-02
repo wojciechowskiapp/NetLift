@@ -18,6 +18,10 @@ using NetLift.Transforms.Services;
 using NetLift.Transforms.Wcf.Analyzers;
 using NetLift.Transforms.Wcf.Generators;
 using NetLift.Transforms.Wcf.Parsers;
+using NetLift.Transforms.Modernization;
+using NetLift.Transforms.Modernization.Analyzers;
+using NetLift.Transforms.Modernization.Generators;
+using NetLift.Core.Interfaces.Modernization;
 
 namespace NetLift.Tests.Integration.E2E;
 
@@ -56,6 +60,17 @@ public class MigrationE2ETests : E2ETestBase
         }
     }
 
+    private IProjectParser CreateProjectParser()
+    {
+        return new OldFormatProjectParser();
+    }
+
+    private async Task<ProjectInfo> ParseProjectAsync(string projectPath)
+    {
+        var parser = CreateProjectParser();
+        return await parser.AnalyzeAsync(projectPath);
+    }
+
     private IMigrationOrchestrator CreateOrchestrator()
     {
         var services = new ServiceCollection();
@@ -83,6 +98,7 @@ public class MigrationE2ETests : E2ETestBase
         // Register MVC rewriters
         services.AddSingleton<IMvcNamespaceRewriter, SystemWebMvcNamespaceRewriter>();
         services.AddSingleton<IControllerBaseRewriter, ControllerBaseClassRewriter>();
+        services.AddSingleton<IControllerMethodBodyRewriter, ControllerMethodBodyRewriter>();
         services.AddSingleton<IActionResultRewriter, ActionResultTypeRewriter>();
         services.AddSingleton<IHttpContextRewriter, HttpContextCurrentRewriter>();
         services.AddSingleton<IActionFilterTransformer, ActionFilterTransformer>();
@@ -112,6 +128,7 @@ public class MigrationE2ETests : E2ETestBase
         services.AddSingleton<IViteConfigGenerator, ViteConfigGenerator>();
         services.AddSingleton<IWebpackConfigGenerator, WebpackConfigGenerator>();
         services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
+        services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
         services.AddSingleton<IPackageJsonGenerator, PackageJsonGenerator>();
 
         // Register EF analyzers and rewriters
@@ -129,8 +146,18 @@ public class MigrationE2ETests : E2ETestBase
         services.AddSingleton<IEnvironmentAppSettingsGenerator, EnvironmentAppSettingsGenerator>();
         services.AddSingleton<IProgramCsGenerator, ProgramCsGenerator>();
 
+        // Register CQRS generators
+        services.AddSingleton<ICommandGenerator, CommandGenerator>();
+        services.AddSingleton<IQueryGenerator, QueryGenerator>();
+        services.AddSingleton<IHandlerGenerator, HandlerGenerator>();
+        services.AddSingleton<IValidatorGenerator, ValidatorGenerator>();
+
         // Register orchestrator
         services.AddSingleton<IMigrationOrchestrator, MigrationOrchestrator>();
+
+        // Register modernization services
+        services.AddSingleton<IControllerAnalyzer, ControllerAnalyzer>();
+        services.AddSingleton<IModernizationOrchestrator, ModernizationOrchestrator>();
 
         var serviceProvider = services.BuildServiceProvider();
         return serviceProvider.GetRequiredService<IMigrationOrchestrator>();
@@ -146,10 +173,11 @@ public class MigrationE2ETests : E2ETestBase
         // Verify original project exists
         File.Exists(projectPath).Should().BeTrue("the mvc5-basic fixture project should exist");
 
-        // Act: Migrate the project
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions { DryRun = false },
             CancellationToken.None);
@@ -187,10 +215,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions { DryRun = false },
             CancellationToken.None);
@@ -225,10 +254,11 @@ public class MigrationE2ETests : E2ETestBase
         var originalContent = await File.ReadAllTextAsync(projectPath);
         var originalTimestamp = File.GetLastWriteTimeUtc(projectPath);
 
-        // Act: Run migration in dry-run mode
+        // Act: Parse project first, then run migration in dry-run mode
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions { DryRun = true },
             CancellationToken.None);
@@ -252,10 +282,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions
             {
@@ -298,10 +329,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions
             {
@@ -331,10 +363,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions { DryRun = false },
             CancellationToken.None);
@@ -365,10 +398,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act: Disable source code transformation
+        // Act: Parse project first, then disable source code transformation
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions
             {
@@ -405,10 +439,11 @@ public class MigrationE2ETests : E2ETestBase
         CopyFixtureToWorkingDirectory();
         var projectPath = Path.Combine(WorkingDirectory, "Mvc5Basic", "Mvc5Basic.csproj");
 
-        // Act
+        // Act: Parse project first, then migrate with ProjectInfo
+        var projectInfo = await ParseProjectAsync(projectPath);
         var orchestrator = CreateOrchestrator();
         var result = await orchestrator.MigrateProjectAsync(
-            projectPath,
+            projectInfo,
             "net8.0",
             new MigrationOptions { DryRun = false },
             CancellationToken.None);

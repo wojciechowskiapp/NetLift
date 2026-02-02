@@ -22,6 +22,7 @@ public class MigrationOrchestrator : IMigrationOrchestrator
     private readonly IProtoGenerator _protoGenerator;
     private readonly IGrpcServiceGenerator _grpcServiceGenerator;
     private readonly IRestControllerGenerator _restControllerGenerator;
+    private readonly IDbContextDetector _dbContextDetector;
 
     // P2: Area and Bundle services
     private readonly IAreaRegistrationParser _areaRegistrationParser;
@@ -30,6 +31,7 @@ public class MigrationOrchestrator : IMigrationOrchestrator
     private readonly IViteConfigGenerator _viteConfigGenerator;
     private readonly IWebpackConfigGenerator _webpackConfigGenerator;
     private readonly IAssetReferenceTransformer _assetReferenceTransformer;
+    private readonly IRazorNamespaceTransformer _razorNamespaceTransformer;
     private readonly IPackageJsonGenerator _packageJsonGenerator;
 
     /// <summary>
@@ -48,12 +50,14 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         IProtoGenerator protoGenerator,
         IGrpcServiceGenerator grpcServiceGenerator,
         IRestControllerGenerator restControllerGenerator,
+        IDbContextDetector dbContextDetector,
         IAreaRegistrationParser areaRegistrationParser,
         IAreaMigrationTransformer areaMigrationTransformer,
         IBundleConfigParser bundleConfigParser,
         IViteConfigGenerator viteConfigGenerator,
         IWebpackConfigGenerator webpackConfigGenerator,
         IAssetReferenceTransformer assetReferenceTransformer,
+        IRazorNamespaceTransformer razorNamespaceTransformer,
         IPackageJsonGenerator packageJsonGenerator)
     {
         _projectParser = projectParser ?? throw new ArgumentNullException(nameof(projectParser));
@@ -68,26 +72,29 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         _protoGenerator = protoGenerator ?? throw new ArgumentNullException(nameof(protoGenerator));
         _grpcServiceGenerator = grpcServiceGenerator ?? throw new ArgumentNullException(nameof(grpcServiceGenerator));
         _restControllerGenerator = restControllerGenerator ?? throw new ArgumentNullException(nameof(restControllerGenerator));
+        _dbContextDetector = dbContextDetector ?? throw new ArgumentNullException(nameof(dbContextDetector));
         _areaRegistrationParser = areaRegistrationParser ?? throw new ArgumentNullException(nameof(areaRegistrationParser));
         _areaMigrationTransformer = areaMigrationTransformer ?? throw new ArgumentNullException(nameof(areaMigrationTransformer));
         _bundleConfigParser = bundleConfigParser ?? throw new ArgumentNullException(nameof(bundleConfigParser));
         _viteConfigGenerator = viteConfigGenerator ?? throw new ArgumentNullException(nameof(viteConfigGenerator));
         _webpackConfigGenerator = webpackConfigGenerator ?? throw new ArgumentNullException(nameof(webpackConfigGenerator));
         _assetReferenceTransformer = assetReferenceTransformer ?? throw new ArgumentNullException(nameof(assetReferenceTransformer));
+        _razorNamespaceTransformer = razorNamespaceTransformer ?? throw new ArgumentNullException(nameof(razorNamespaceTransformer));
         _packageJsonGenerator = packageJsonGenerator ?? throw new ArgumentNullException(nameof(packageJsonGenerator));
     }
 
     /// <inheritdoc/>
     public async Task<MigrationResult> MigrateProjectAsync(
-        string projectPath,
+        ProjectInfo projectInfo,
         string targetFramework,
         MigrationOptions options,
         CancellationToken cancellationToken = default)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
+        ArgumentNullException.ThrowIfNull(projectInfo);
         ArgumentException.ThrowIfNullOrWhiteSpace(targetFramework);
         ArgumentNullException.ThrowIfNull(options);
 
+        var projectPath = projectInfo.FilePath;
         var stopwatch = Stopwatch.StartNew();
         var changes = new List<FileChange>();
         var diagnostics = new List<MigrationDiagnostic>();
@@ -96,7 +103,7 @@ public class MigrationOrchestrator : IMigrationOrchestrator
 
         try
         {
-            // Phase 1: Analyze project
+            // Phase 1: Use pre-parsed project info (no re-parsing needed)
             diagnostics.Add(new MigrationDiagnostic
             {
                 Level = DiagnosticLevel.Info,
@@ -104,7 +111,13 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 FilePath = projectPath
             });
 
-            var projectInfo = await _projectParser.AnalyzeAsync(projectPath, cancellationToken);
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = $"Using pre-parsed project info with {projectInfo.CompileItems.Count} compile items",
+                FilePath = projectPath
+            });
+
             var projectType = _projectTypeDetector.Detect(projectInfo);
 
             diagnostics.Add(new MigrationDiagnostic
@@ -114,21 +127,43 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 FilePath = projectPath
             });
 
-            // Phase 2: Convert project file to SDK-style
             var projectDir = Path.GetDirectoryName(projectPath)!;
-            var sdkConversionXml = _sdkProjectConverter.Convert(projectInfo, targetFramework);
 
-            changes.Add(new FileChange
+            // Phase 2: Convert project to SDK-style format (if not already converted)
+            // Check if the current project file is already SDK-style by reading it
+            var currentProjectContent = await File.ReadAllTextAsync(projectPath, cancellationToken);
+            var isAlreadySdkStyle = currentProjectContent.Contains("<Project Sdk=", StringComparison.OrdinalIgnoreCase);
+
+            if (!isAlreadySdkStyle && projectInfo.Format == ProjectFormat.OldStyle)
             {
-                FilePath = projectPath,
-                Type = ChangeType.Modify,
-                OriginalContent = File.Exists(projectPath) ? await File.ReadAllTextAsync(projectPath, cancellationToken) : null,
-                NewContent = sdkConversionXml.ToString(),
-                Confidence = 95,
-                Description = "Converted project file to SDK-style format"
-            });
+                var sdkProject = _sdkProjectConverter.Convert(projectInfo, targetFramework);
 
-            confidenceScores.Add(95);
+                changes.Add(new FileChange
+                {
+                    FilePath = projectPath,
+                    Type = ChangeType.Modify,
+                    OriginalContent = currentProjectContent,
+                    NewContent = sdkProject.ToString(),
+                    Confidence = 95,
+                    Description = "Converted project to SDK-style format"
+                });
+
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Info,
+                    Message = "Converted project to SDK-style format",
+                    FilePath = projectPath
+                });
+            }
+            else if (isAlreadySdkStyle)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Info,
+                    Message = "Project is already SDK-style, skipping conversion",
+                    FilePath = projectPath
+                });
+            }
 
             // Phase 3: Transform C# source files
             if (options.TransformSourceCode && projectInfo.CompileItems.Any())
@@ -173,8 +208,20 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 GenerateViewImportsFile(
                     projectDir,
                     projectInfo.RootNamespace ?? projectInfo.Name,
+                    projectInfo,
                     changes,
                     diagnostics);
+            }
+
+            // Phase 5.5: Transform Razor view namespaces (PagedList → X.PagedList, etc.)
+            if (projectType.IsMvc.Detected)
+            {
+                await TransformRazorNamespacesAsync(
+                    projectDir,
+                    changes,
+                    diagnostics,
+                    confidenceScores,
+                    cancellationToken);
             }
 
             // Phase 6: Migrate MVC Areas
@@ -261,6 +308,22 @@ public class MigrationOrchestrator : IMigrationOrchestrator
     {
         var projectDir = Path.GetDirectoryName(projectInfo.FilePath)!;
 
+        // PRE-SCAN PHASE: Detect all DbContext types across all source files
+        // This enables accurate detection in controllers that reference DbContext with non-standard names
+        var knownDbContextTypes = await DetectDbContextTypesAsync(projectInfo, projectDir, cancellationToken);
+
+        if (knownDbContextTypes.Count > 0)
+        {
+            _sourceFileTransformer.SetKnownDbContextTypes(knownDbContextTypes);
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = $"Detected {knownDbContextTypes.Count} DbContext type(s): {string.Join(", ", knownDbContextTypes)}",
+                Code = "MIG_DBCONTEXT"
+            });
+        }
+
+        // TRANSFORM PHASE: Process all source files
         foreach (var compileItem in projectInfo.CompileItems)
         {
             var sourceFilePath = Path.IsPathRooted(compileItem.Include)
@@ -317,6 +380,47 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 });
             }
         }
+    }
+
+    /// <summary>
+    /// Pre-scans all source files to detect DbContext types using inheritance analysis.
+    /// This enables accurate detection in controllers that reference DbContext with non-standard names.
+    /// </summary>
+    private async Task<HashSet<string>> DetectDbContextTypesAsync(
+        ProjectInfo projectInfo,
+        string projectDir,
+        CancellationToken cancellationToken)
+    {
+        var knownDbContextTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var compileItem in projectInfo.CompileItems)
+        {
+            var sourceFilePath = Path.IsPathRooted(compileItem.Include)
+                ? compileItem.Include
+                : Path.Combine(projectDir, compileItem.Include);
+
+            if (!File.Exists(sourceFilePath))
+            {
+                continue;
+            }
+
+            try
+            {
+                var sourceCode = await File.ReadAllTextAsync(sourceFilePath, cancellationToken);
+                var detectedContexts = _dbContextDetector.Detect(sourceCode);
+
+                foreach (var context in detectedContexts)
+                {
+                    knownDbContextTypes.Add(context.ClassName);
+                }
+            }
+            catch
+            {
+                // Ignore errors during pre-scan - we'll report them during transformation
+            }
+        }
+
+        return knownDbContextTypes;
     }
 
     private async Task MigrateConfigurationAsync(
@@ -401,6 +505,7 @@ public class MigrationOrchestrator : IMigrationOrchestrator
     private void GenerateViewImportsFile(
         string projectDir,
         string rootNamespace,
+        ProjectInfo projectInfo,
         List<FileChange> changes,
         List<MigrationDiagnostic> diagnostics)
     {
@@ -416,6 +521,9 @@ public class MigrationOrchestrator : IMigrationOrchestrator
             });
             return;
         }
+
+        // Detect additional namespaces needed based on package/assembly references
+        DetectAndAddRequiredNamespaces(projectInfo, diagnostics);
 
         var viewImportsPath = Path.Combine(viewsDir, "_ViewImports.cshtml");
         var viewImportsContent = _viewImportsGenerator.Generate(rootNamespace);
@@ -436,6 +544,32 @@ public class MigrationOrchestrator : IMigrationOrchestrator
             Message = "Generated _ViewImports.cshtml",
             FilePath = viewImportsPath
         });
+    }
+
+    /// <summary>
+    /// Detects required namespaces based on package/assembly references and adds them to the ViewImportsGenerator.
+    /// </summary>
+    private void DetectAndAddRequiredNamespaces(ProjectInfo projectInfo, List<MigrationDiagnostic> diagnostics)
+    {
+        // Detect PagedList usage (assembly reference or package reference)
+        var hasPagedList = projectInfo.References.Any(r =>
+            r.Name.Equals("PagedList", StringComparison.OrdinalIgnoreCase) ||
+            r.Name.Equals("PagedList.Mvc", StringComparison.OrdinalIgnoreCase)) ||
+            projectInfo.PackageReferences.Any(p =>
+            p.Id.Equals("PagedList", StringComparison.OrdinalIgnoreCase) ||
+            p.Id.Equals("PagedList.Mvc", StringComparison.OrdinalIgnoreCase));
+
+        if (hasPagedList)
+        {
+            // PagedList → X.PagedList mapping is handled by MvcNamespaceMappings
+            _viewImportsGenerator.AddNamespace("PagedList");
+            _viewImportsGenerator.AddNamespace("PagedList.Mvc");
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = "Detected PagedList usage, adding X.PagedList namespace to _ViewImports.cshtml"
+            });
+        }
     }
 
     private async Task MigrateWcfServicesAsync(
@@ -743,6 +877,82 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         });
 
         await Task.CompletedTask;
+    }
+
+    private async Task TransformRazorNamespacesAsync(
+        string projectDir,
+        List<FileChange> changes,
+        List<MigrationDiagnostic> diagnostics,
+        List<int> confidenceScores,
+        CancellationToken cancellationToken)
+    {
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = "Transforming Razor view namespaces (PagedList → X.PagedList)",
+            FilePath = projectDir
+        });
+
+        var viewsDir = Path.Combine(projectDir, "Views");
+        if (!Directory.Exists(viewsDir))
+        {
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = "Views directory not found, skipping Razor namespace transformation",
+                FilePath = projectDir
+            });
+            return;
+        }
+
+        var razorFiles = Directory.GetFiles(viewsDir, "*.cshtml", SearchOption.AllDirectories);
+
+        foreach (var razorFile in razorFiles)
+        {
+            try
+            {
+                var originalContent = await File.ReadAllTextAsync(razorFile, cancellationToken);
+                var transformedContent = _razorNamespaceTransformer.TransformRazorView(originalContent);
+
+                if (transformedContent != originalContent)
+                {
+                    changes.Add(new FileChange
+                    {
+                        FilePath = razorFile,
+                        Type = ChangeType.Modify,
+                        OriginalContent = originalContent,
+                        NewContent = transformedContent,
+                        Confidence = 95,
+                        Description = "Transformed PagedList namespaces to X.PagedList"
+                    });
+                    confidenceScores.Add(95);
+
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Info,
+                        Message = $"Transformed namespaces in {Path.GetFileName(razorFile)}",
+                        FilePath = razorFile
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Warning,
+                    Message = $"Failed to transform namespaces in {razorFile}: {ex.Message}",
+                    FilePath = razorFile,
+                    Code = "RAZOR001"
+                });
+            }
+        }
+
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = $"Completed Razor namespace transformation for {razorFiles.Length} view(s)",
+            FilePath = projectDir
+        });
     }
 
     private async Task MigrateAreasAsync(

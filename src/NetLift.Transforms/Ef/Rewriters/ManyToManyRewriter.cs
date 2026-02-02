@@ -184,8 +184,8 @@ public sealed class ManyToManyRewriter : CSharpSyntaxRewriter, IManyToManyRewrit
             return null;
         }
 
-        // For the right entity, we'll use a placeholder since we can't easily infer from lambda
-        var rightEntity = "UnknownEntity"; // Would need semantic model to properly resolve
+        // Extract the right entity from the HasMany lambda (e.g., c => c.Instructors -> Instructor)
+        var rightEntity = ExtractNavigationEntityType(hasManyCall);
 
         // Parse Map configuration if present
         MapConfiguration? mapConfig = null;
@@ -205,6 +205,126 @@ public sealed class ManyToManyRewriter : CSharpSyntaxRewriter, IManyToManyRewrit
             HasMap = mapCall != null,
             MapConfig = mapConfig
         };
+    }
+
+    /// <summary>
+    /// Extracts the entity type from a navigation property in a HasMany lambda.
+    /// E.g., HasMany(c => c.Instructors) -> "Instructor"
+    /// </summary>
+    private static string ExtractNavigationEntityType(InvocationExpressionSyntax hasManyCall)
+    {
+        // Get the lambda argument from HasMany(c => c.Instructors)
+        var lambda = hasManyCall.ArgumentList.Arguments.FirstOrDefault()?.Expression;
+
+        if (lambda is SimpleLambdaExpressionSyntax simpleLambda)
+        {
+            // Get the body (c.Instructors)
+            if (simpleLambda.Body is MemberAccessExpressionSyntax memberAccess)
+            {
+                var propertyName = memberAccess.Name.Identifier.Text;
+                return SingularizePropertyName(propertyName);
+            }
+        }
+        else if (lambda is ParenthesizedLambdaExpressionSyntax parenLambda)
+        {
+            if (parenLambda.Body is MemberAccessExpressionSyntax memberAccess)
+            {
+                var propertyName = memberAccess.Name.Identifier.Text;
+                return SingularizePropertyName(propertyName);
+            }
+        }
+
+        return "UnknownEntity";
+    }
+
+    /// <summary>
+    /// Singularizes a plural property name to get the entity type.
+    /// E.g., "Instructors" -> "Instructor", "Courses" -> "Course", "People" -> "Person"
+    /// </summary>
+    private static string SingularizePropertyName(string propertyName)
+    {
+        if (string.IsNullOrWhiteSpace(propertyName))
+        {
+            return "UnknownEntity";
+        }
+
+        // Handle common irregular plurals
+        var irregulars = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "People", "Person" },
+            { "Children", "Child" },
+            { "Men", "Man" },
+            { "Women", "Woman" },
+            { "Teeth", "Tooth" },
+            { "Feet", "Foot" },
+            { "Mice", "Mouse" },
+            { "Geese", "Goose" },
+            { "Indices", "Index" },
+            { "Matrices", "Matrix" },
+            { "Vertices", "Vertex" },
+            { "Courses", "Course" },
+            { "Addresses", "Address" }
+        };
+
+        if (irregulars.TryGetValue(propertyName, out var singular))
+        {
+            return singular;
+        }
+
+        // Handle common patterns
+        // -ies -> -y (e.g., "Categories" -> "Category")
+        if (propertyName.EndsWith("ies", StringComparison.Ordinal) && propertyName.Length > 3)
+        {
+            return propertyName[..^3] + "y";
+        }
+
+        // -sses -> -ss (e.g., "Classes" -> "Class", "Addresses" -> "Address")
+        if (propertyName.EndsWith("sses", StringComparison.Ordinal) && propertyName.Length > 4)
+        {
+            return propertyName[..^2];
+        }
+
+        // -xes -> -x (e.g., "Boxes" -> "Box")
+        if (propertyName.EndsWith("xes", StringComparison.Ordinal) && propertyName.Length > 3)
+        {
+            return propertyName[..^2];
+        }
+
+        // -ches -> -ch (e.g., "Batches" -> "Batch")
+        if (propertyName.EndsWith("ches", StringComparison.Ordinal) && propertyName.Length > 4)
+        {
+            return propertyName[..^2];
+        }
+
+        // -shes -> -sh (e.g., "Bushes" -> "Bush")
+        if (propertyName.EndsWith("shes", StringComparison.Ordinal) && propertyName.Length > 4)
+        {
+            return propertyName[..^2];
+        }
+
+        // -ves -> -f (e.g., "Shelves" -> "Shelf", "Wives" -> "Wife")
+        if (propertyName.EndsWith("ves", StringComparison.Ordinal) && propertyName.Length > 3)
+        {
+            // Check if it should be -fe (like "Wives" -> "Wife")
+            var withFe = propertyName[..^3] + "fe";
+            if (propertyName.Equals("Wives", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Equals("Lives", StringComparison.OrdinalIgnoreCase) ||
+                propertyName.Equals("Knives", StringComparison.OrdinalIgnoreCase))
+            {
+                return withFe;
+            }
+            return propertyName[..^3] + "f";
+        }
+
+        // Standard -s removal (e.g., "Instructors" -> "Instructor", "Courses" -> "Course")
+        if (propertyName.EndsWith("s", StringComparison.Ordinal) &&
+            !propertyName.EndsWith("ss", StringComparison.Ordinal) &&
+            propertyName.Length > 1)
+        {
+            return propertyName[..^1];
+        }
+
+        return propertyName;
     }
 
     /// <summary>

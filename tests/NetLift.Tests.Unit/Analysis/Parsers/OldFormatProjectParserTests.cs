@@ -183,15 +183,15 @@ public class OldFormatProjectParserTests
     }
 
     [Fact]
-    public async Task AnalyzeAsync_ShouldExtractCompileItemWithDependentUpon()
+    public async Task AnalyzeAsync_ShouldExcludeGlobalAsaxCs()
     {
         // Act
         var result = await _parser.AnalyzeAsync(_mvc5BasicProjectPath);
 
-        // Assert
+        // Assert: Global.asax.cs is excluded because it's incompatible with ASP.NET Core
+        // (replaced by Program.cs in modern ASP.NET Core apps)
         var globalAsaxCs = result.CompileItems.FirstOrDefault(c => c.Include.Contains("Global.asax.cs"));
-        globalAsaxCs.Should().NotBeNull();
-        globalAsaxCs!.DependentUpon.Should().Be("Global.asax");
+        globalAsaxCs.Should().BeNull("Global.asax.cs should be excluded from migration");
     }
 
     [Fact]

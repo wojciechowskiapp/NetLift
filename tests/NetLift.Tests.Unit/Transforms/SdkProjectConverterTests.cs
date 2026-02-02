@@ -694,9 +694,11 @@ public class SdkProjectConverterTests
         // Act
         var result = _converter.Convert(projectInfo);
 
-        // Assert
-        var itemGroups = result.Root!.Elements("ItemGroup").ToList();
-        itemGroups.Should().BeEmpty();
+        // Assert: Should have Compile Remove ItemGroup but no ProjectReference ItemGroup
+        var projectRefItemGroups = result.Root!.Elements("ItemGroup")
+            .Where(ig => ig.Elements("ProjectReference").Any())
+            .ToList();
+        projectRefItemGroups.Should().BeEmpty();
     }
 
     [Fact]
@@ -733,11 +735,13 @@ public class SdkProjectConverterTests
             // Act
             var result = _converter.Convert(projectInfo);
 
-            // Assert
-            var itemGroups = result.Root!.Elements("ItemGroup").ToList();
-            itemGroups.Should().HaveCount(1);
+            // Assert: Find the ItemGroup containing ProjectReferences
+            var projectRefItemGroups = result.Root!.Elements("ItemGroup")
+                .Where(ig => ig.Elements("ProjectReference").Any())
+                .ToList();
+            projectRefItemGroups.Should().HaveCount(1);
 
-            var projectRefs = itemGroups[0].Elements("ProjectReference").ToList();
+            var projectRefs = projectRefItemGroups[0].Elements("ProjectReference").ToList();
             projectRefs.Should().HaveCount(1);
             projectRefs[0].Attribute("Include")?.Value.Should().Be("ReferencedProject.csproj");
 
