@@ -26,8 +26,8 @@
     <Authors>Michał Wojciechowski</Authors>
     <Description>CLI tool for automated migration of .NET Framework applications to .NET 8+. Supports MVC5, EF6, WCF, and web.config transformations.</Description>
     <PackageTags>dotnet;migration;netframework;aspnetcore;mvc;ef6;efcore;wcf;grpc</PackageTags>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <RepositoryUrl>https://github.com/yourusername/NetLift</RepositoryUrl>
+    <PackageLicenseExpression>AGPL-3.0-only</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/wojciechowskiapp/NetLift</RepositoryUrl>
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>netlift</ToolCommandName>
     <PackageOutputPath>./nupkg</PackageOutputPath>

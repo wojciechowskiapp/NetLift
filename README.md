@@ -1,5 +1,7 @@
 # NetLift
 
+[![Build](https://github.com/wojciechowskiapp/NetLift/actions/workflows/build.yml/badge.svg)](https://github.com/wojciechowskiapp/NetLift/actions/workflows/build.yml)
+
 Automated migration from .NET Framework to .NET 8+.
 
 ## Why
