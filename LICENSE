@@ -1,0 +1,52 @@
+NetLift - .NET Framework to .NET 8+ Migration Tool
+Copyright (c) 2026 Wojciechowski
+
+This software is dual-licensed:
+
+================================================================================
+OPTION 1: AGPL-3.0 (Open Source)
+================================================================================
+
+For open source projects and individuals who agree to release their entire
+application under AGPL-3.0, this software is available under the GNU Affero
+General Public License version 3.
+
+See LICENSE-AGPL for the full license text.
+
+Key requirements of AGPL-3.0:
+- You must release your entire application's source code under AGPL-3.0
+- If you modify NetLift and provide it as a service, you must release the
+  modified source code
+- All derivative works must also be licensed under AGPL-3.0
+
+================================================================================
+OPTION 2: Commercial License
+================================================================================
+
+For organizations that:
+- Do not want to release their source code under AGPL-3.0
+- Want to use NetLift in proprietary/commercial applications
+- Need support, warranties, or custom features
+
+A commercial license is required.
+
+See LICENSE-COMMERCIAL for details or contact:
+  Email: hello@wojciechowski.app
+  Website: https://wojciechowski.app
+
+================================================================================
+WHICH LICENSE APPLIES TO YOU?
+================================================================================
+
+You are using AGPL-3.0 if:
+- You are an individual learning or experimenting
+- Your project is fully open source under AGPL-3.0
+- You agree to release all source code of applications using NetLift
+
+You need a Commercial License if:
+- You are a company using NetLift for commercial purposes
+- You do not want to open source your application
+- You want to keep your migration process proprietary
+- You need commercial support or SLA
+
+When in doubt, contact us for clarification.
