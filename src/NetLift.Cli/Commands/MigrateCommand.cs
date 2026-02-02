@@ -535,7 +535,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
 
             if (settings.Verbose)
             {
-                AnsiConsole.MarkupLine($"[red]Failed to migrate {projectRef.Name}: {ex.Message}[/]");
+                AnsiConsole.MarkupLine($"[red]Failed to migrate {Markup.Escape(projectRef.Name)}: {Markup.Escape(ex.Message)}[/]");
             }
         }
 
@@ -671,7 +671,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
                 AnsiConsole.MarkupLine($"[bold]{result.ProjectName}:[/]");
                 foreach (var task in result.ManualTasks)
                 {
-                    AnsiConsole.MarkupLine($"  [magenta]•[/] {task}");
+                    AnsiConsole.MarkupLine($"  [magenta]•[/] {Markup.Escape(task)}");
                 }
             }
         }
@@ -687,7 +687,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
                 AnsiConsole.MarkupLine($"[bold]{result.ProjectName}:[/]");
                 foreach (var warning in result.Warnings)
                 {
-                    AnsiConsole.MarkupLine($"  [yellow]•[/] {warning}");
+                    AnsiConsole.MarkupLine($"  [yellow]•[/] {Markup.Escape(warning)}");
                 }
             }
         }
@@ -702,7 +702,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
             foreach (var result in failedProjects)
             {
                 AnsiConsole.MarkupLine($"[bold]{result.ProjectName}:[/]");
-                AnsiConsole.MarkupLine($"  [red]•[/] {result.ErrorMessage}");
+                AnsiConsole.MarkupLine($"  [red]•[/] {Markup.Escape(result.ErrorMessage ?? "Unknown error")}");
             }
         }
     }
@@ -819,7 +819,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
         }
         catch (Exception ex)
         {
-            AnsiConsole.MarkupLine($"[red]Error generating preview: {ex.Message}[/]");
+            AnsiConsole.MarkupLine($"[red]Error generating preview: {Markup.Escape(ex.Message)}[/]");
         }
     }
 }
