@@ -14,9 +14,12 @@ Migration is also a good time to fix architectural debt. Legacy codebases often 
 
 NetLift handles the mechanical parts. The `migrate` command gets you to .NET 8. The `modernize` command goes further and restructures your code into CQRS patterns with proper separation between commands, queries, and handlers. You end up with a codebase that's not just on a supported framework, but actually easier to work with.
 
-## Example
+## Examples
 
-See a real migration: [ContosoUniversity PR](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/1)
+Real migrations you can review:
+
+- [ContosoUniversity](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/1) - Academic sample app with students, courses, enrollments
+- [MvcMusicStore](https://github.com/wojciechowskiapp/MvcMusicStore.LegacyMigration/pull/1) - E-commerce app with shopping cart, checkout, CQRS modernization
 
 ## How it works
 
