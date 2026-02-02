@@ -10,14 +10,15 @@ public interface IMigrationOrchestrator
 {
     /// <summary>
     /// Migrates a .NET Framework project to .NET 8+ with comprehensive transformation.
+    /// Uses pre-parsed project information to avoid re-parsing after project file conversion.
     /// </summary>
-    /// <param name="projectPath">The absolute path to the .csproj file to migrate.</param>
+    /// <param name="projectInfo">The pre-parsed project information containing CompileItems.</param>
     /// <param name="targetFramework">The target framework (e.g., "net8.0", "net9.0").</param>
     /// <param name="options">Migration options controlling the transformation scope.</param>
     /// <param name="cancellationToken">Cancellation token for async operations.</param>
     /// <returns>A comprehensive migration result with all changes and diagnostics.</returns>
     Task<MigrationResult> MigrateProjectAsync(
-        string projectPath,
+        ProjectInfo projectInfo,
         string targetFramework,
         MigrationOptions options,
         CancellationToken cancellationToken = default);

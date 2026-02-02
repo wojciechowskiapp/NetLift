@@ -438,6 +438,8 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
             }
 
             // Run code transformations via orchestrator
+            // IMPORTANT: Pass the already-parsed projectInfo to avoid re-parsing
+            // the converted SDK-style project file (which would have empty CompileItems)
             var migrationOptions = new MigrationOptions
             {
                 DryRun = settings.DryRun,
@@ -449,7 +451,7 @@ public sealed class MigrateCommand : AsyncCommand<MigrateCommand.Settings>
             };
 
             var migrationResult = await _orchestrator.MigrateProjectAsync(
-                projectRef.AbsolutePath,
+                projectInfo,  // Pass pre-parsed ProjectInfo instead of path
                 settings.TargetFramework,
                 migrationOptions,
                 CancellationToken.None);

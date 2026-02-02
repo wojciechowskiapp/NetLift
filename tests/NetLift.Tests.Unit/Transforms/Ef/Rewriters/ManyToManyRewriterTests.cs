@@ -32,7 +32,7 @@ public class SchoolContext : DbContext
         _rewriter.ConfidenceScore.Should().Be(95);
         _rewriter.DetectedRelationships.Should().HaveCount(1);
         _rewriter.DetectedRelationships.First().LeftEntity.Should().Be("Student");
-        _rewriter.DetectedRelationships.First().RightEntity.Should().Be("UnknownEntity"); // Can't infer from lambda
+        _rewriter.DetectedRelationships.First().RightEntity.Should().Be("Course"); // Inferred from Courses navigation property
         _rewriter.DetectedRelationships.First().JoinTableName.Should().BeNull();
         _rewriter.Diagnostics.Should().ContainSingle();
     }

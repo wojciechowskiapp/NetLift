@@ -67,13 +67,13 @@ public class PackageReferenceConverterTests
     [Fact]
     public void Convert_KeepsRegularPackages()
     {
-        // Arrange
+        // Arrange - Use packages that are not in ObsoletePackages or PackageReplacements
         var packagesConfig = new PackagesConfig
         {
             Packages = new List<PackageReference>
             {
-                new() { Id = "Newtonsoft.Json", Version = "13.0.3" },
-                new() { Id = "Serilog", Version = "3.1.1" }
+                new() { Id = "Serilog", Version = "3.1.1" },
+                new() { Id = "AutoMapper", Version = "12.0.0" }
             }
         };
 
@@ -82,8 +82,8 @@ public class PackageReferenceConverterTests
 
         // Assert
         result.Packages.Should().HaveCount(2);
-        result.Packages.Should().Contain(p => p.Id == "Newtonsoft.Json" && p.Version == "13.0.3");
         result.Packages.Should().Contain(p => p.Id == "Serilog" && p.Version == "3.1.1");
+        result.Packages.Should().Contain(p => p.Id == "AutoMapper" && p.Version == "12.0.0");
         result.RemovedPackages.Should().BeEmpty();
         result.Replacements.Should().BeEmpty();
     }
@@ -116,7 +116,7 @@ public class PackageReferenceConverterTests
     }
 
     [Fact]
-    public void Convert_ReplacesAspNetMvcPackages()
+    public void Convert_RemovesAspNetMvcPackages()
     {
         // Arrange
         var packagesConfig = new PackagesConfig
@@ -130,20 +130,16 @@ public class PackageReferenceConverterTests
         // Act
         var result = _converter.Convert(packagesConfig, "net8.0");
 
-        // Assert
-        result.Packages.Should().HaveCount(1);
-        result.Packages[0].Id.Should().Be("Microsoft.AspNetCore.Mvc");
-        result.Packages[0].Version.Should().Be("2.2.0");
-        result.Replacements.Should().HaveCount(1);
-        result.Replacements[0].OldPackage.Id.Should().Be("Microsoft.AspNet.Mvc");
-        result.Replacements[0].NewPackage.Id.Should().Be("Microsoft.AspNetCore.Mvc");
-        result.Replacements[0].Reason.Should().Contain("ASP.NET MVC 5");
+        // Assert: ASP.NET Core MVC is included with Microsoft.NET.Sdk.Web, so the package is removed
+        result.Packages.Should().BeEmpty();
+        result.RemovedPackages.Should().HaveCount(1);
+        result.RemovedPackages[0].Id.Should().Be("Microsoft.AspNet.Mvc");
         result.Warnings.Should().HaveCount(1);
-        result.Warnings[0].Severity.Should().Be(WarningSeverity.Warning);
+        result.Warnings[0].Severity.Should().Be(WarningSeverity.Info);
     }
 
     [Fact]
-    public void Convert_ReplacesAspNetWebApiPackages()
+    public void Convert_RemovesAspNetWebApiPackages()
     {
         // Arrange
         var packagesConfig = new PackagesConfig
@@ -157,11 +153,10 @@ public class PackageReferenceConverterTests
         // Act
         var result = _converter.Convert(packagesConfig, "net8.0");
 
-        // Assert
-        result.Packages.Should().HaveCount(1);
-        result.Packages[0].Id.Should().Be("Microsoft.AspNetCore.Mvc");
-        result.Packages[0].Version.Should().Be("2.2.0");
-        result.Replacements.Should().HaveCount(1);
+        // Assert: WebAPI is included with Microsoft.NET.Sdk.Web, so the package is removed
+        result.Packages.Should().BeEmpty();
+        result.RemovedPackages.Should().HaveCount(1);
+        result.RemovedPackages[0].Id.Should().Be("Microsoft.AspNet.WebApi");
     }
 
     [Fact]
@@ -299,20 +294,21 @@ public class PackageReferenceConverterTests
     [Fact]
     public void Convert_ReplacementPreservesDevelopmentDependencyFlag()
     {
-        // Arrange
+        // Arrange - Use ApplicationInsights which actually gets replaced (not removed)
         var packagesConfig = new PackagesConfig
         {
             Packages = new List<PackageReference>
             {
-                new() { Id = "Microsoft.AspNet.Mvc", Version = "5.2.7", IsDevelopmentDependency = true }
+                new() { Id = "Microsoft.ApplicationInsights", Version = "2.20.0", IsDevelopmentDependency = true }
             }
         };
 
         // Act
         var result = _converter.Convert(packagesConfig, "net8.0");
 
-        // Assert
+        // Assert: ApplicationInsights is replaced with AspNetCore version
         result.Packages.Should().HaveCount(1);
+        result.Packages[0].Id.Should().Be("Microsoft.ApplicationInsights.AspNetCore");
         result.Packages[0].IsDevelopmentDependency.Should().BeTrue();
     }
 
@@ -348,11 +344,12 @@ public class PackageReferenceConverterTests
         {
             Packages = new List<PackageReference>
             {
-                new() { Id = "Newtonsoft.Json", Version = "12.0.3" }, // Keep
-                new() { Id = "Microsoft.AspNet.Mvc", Version = "5.2.7" }, // Replace
+                new() { Id = "Newtonsoft.Json", Version = "12.0.3" }, // Replaced (upgraded)
+                new() { Id = "Microsoft.AspNet.Mvc", Version = "5.2.7" }, // Remove (included with Sdk.Web)
                 new() { Id = "Microsoft.Bcl.Async", Version = "1.0.168" }, // Remove (obsolete)
                 new() { Id = "System.Runtime", Version = "4.3.0" }, // Remove (framework)
-                new() { Id = "EntityFramework", Version = "6.4.4" } // Keep
+                new() { Id = "EntityFramework", Version = "6.4.4" }, // Remove (replaced by EF Core)
+                new() { Id = "Serilog", Version = "3.1.1" } // Keep as-is
             }
         };
 
@@ -360,19 +357,20 @@ public class PackageReferenceConverterTests
         var result = _converter.Convert(packagesConfig, "net8.0");
 
         // Assert
-        result.Packages.Should().HaveCount(3);
-        result.Packages.Should().Contain(p => p.Id == "Newtonsoft.Json");
-        result.Packages.Should().Contain(p => p.Id == "Microsoft.AspNetCore.Mvc");
-        result.Packages.Should().Contain(p => p.Id == "EntityFramework");
+        result.Packages.Should().HaveCount(2);
+        result.Packages.Should().Contain(p => p.Id == "Newtonsoft.Json" && p.Version == "13.0.3"); // Upgraded
+        result.Packages.Should().Contain(p => p.Id == "Serilog"); // Kept as-is
 
-        result.RemovedPackages.Should().HaveCount(2);
+        result.RemovedPackages.Should().HaveCount(4);
+        result.RemovedPackages.Should().Contain(p => p.Id == "Microsoft.AspNet.Mvc");
         result.RemovedPackages.Should().Contain(p => p.Id == "Microsoft.Bcl.Async");
         result.RemovedPackages.Should().Contain(p => p.Id == "System.Runtime");
+        result.RemovedPackages.Should().Contain(p => p.Id == "EntityFramework");
 
         result.Replacements.Should().HaveCount(1);
-        result.Replacements[0].OldPackage.Id.Should().Be("Microsoft.AspNet.Mvc");
+        result.Replacements[0].OldPackage.Id.Should().Be("Newtonsoft.Json");
 
-        result.Warnings.Should().HaveCount(3);
+        result.Warnings.Should().HaveCount(5); // 4 removed + 1 replaced
     }
 
     [Fact]
@@ -512,7 +510,7 @@ public class PackageReferenceConverterTests
     }
 
     [Fact]
-    public void Convert_ReplacesAspNetWebPages()
+    public void Convert_RemovesAspNetWebPages()
     {
         // Arrange
         var packagesConfig = new PackagesConfig
@@ -526,9 +524,31 @@ public class PackageReferenceConverterTests
         // Act
         var result = _converter.Convert(packagesConfig, "net8.0");
 
-        // Assert
+        // Assert: Razor pages are included with Microsoft.NET.Sdk.Web, so package is removed
+        result.Packages.Should().BeEmpty();
+        result.RemovedPackages.Should().HaveCount(1);
+        result.RemovedPackages[0].Id.Should().Be("Microsoft.AspNet.WebPages");
+    }
+
+    [Fact]
+    public void Convert_ReplacesApplicationInsights()
+    {
+        // Arrange
+        var packagesConfig = new PackagesConfig
+        {
+            Packages = new List<PackageReference>
+            {
+                new() { Id = "Microsoft.ApplicationInsights", Version = "2.20.0" }
+            }
+        };
+
+        // Act
+        var result = _converter.Convert(packagesConfig, "net8.0");
+
+        // Assert: ApplicationInsights is replaced with ASP.NET Core version
         result.Packages.Should().HaveCount(1);
-        result.Packages[0].Id.Should().Be("Microsoft.AspNetCore.Mvc.Razor");
-        result.Packages[0].Version.Should().Be("2.2.0");
+        result.Packages[0].Id.Should().Be("Microsoft.ApplicationInsights.AspNetCore");
+        result.Packages[0].Version.Should().Be("2.22.0");
+        result.Replacements.Should().HaveCount(1);
     }
 }

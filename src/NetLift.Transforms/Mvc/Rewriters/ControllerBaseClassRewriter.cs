@@ -468,6 +468,56 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
     }
 
     /// <summary>
+    /// Visits attribute syntax to transform [Bind(Include = "...")] to [Bind("...")].
+    /// In ASP.NET Core, Bind attribute uses positional argument instead of named Include parameter.
+    /// </summary>
+    public override SyntaxNode? VisitAttribute(AttributeSyntax node)
+    {
+        var visited = (AttributeSyntax?)base.VisitAttribute(node);
+        if (visited == null)
+        {
+            return null;
+        }
+
+        // Check if this is a Bind attribute
+        var name = visited.Name.ToString();
+        if (!name.Equals("Bind", StringComparison.Ordinal) &&
+            !name.Equals("BindAttribute", StringComparison.Ordinal))
+        {
+            return visited;
+        }
+
+        // Check if it has an Include named argument
+        var argumentList = visited.ArgumentList;
+        if (argumentList == null || argumentList.Arguments.Count == 0)
+        {
+            return visited;
+        }
+
+        // Find the Include argument
+        var includeArg = argumentList.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == "Include");
+
+        if (includeArg == null)
+        {
+            return visited;
+        }
+
+        // Transform [Bind(Include = "...")] to [Bind("...")]
+        var newArg = SyntaxFactory.AttributeArgument(includeArg.Expression);
+        var newArgumentList = SyntaxFactory.AttributeArgumentList(
+            SyntaxFactory.SingletonSeparatedList(newArg));
+
+        var result = visited.WithArgumentList(newArgumentList);
+
+        _diagnostics.Add(new RewriterDiagnostic(
+            "Transformed [Bind(Include = \"...\")] to [Bind(\"...\")] for ASP.NET Core compatibility",
+            RewriterDiagnosticSeverity.Info));
+
+        return result;
+    }
+
+    /// <summary>
     /// Adds required using directives that were identified during rewriting.
     /// </summary>
     private SyntaxNode AddRequiredUsings(SyntaxNode root)

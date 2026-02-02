@@ -17,19 +17,42 @@ public class PackageReferenceConverter : IPackageReferenceConverter
         ["Microsoft.Net.Compilers"] = "Roslyn compilers are built into SDK",
         ["Microsoft.CodeDom.Providers.DotNetCompilerPlatform"] = "Not needed with Roslyn SDK",
         ["Microsoft.Web.Infrastructure"] = "Not needed in modern .NET",
-        ["Microsoft.AspNet.Razor"] = "Razor engine is built into ASP.NET Core"
+        ["Microsoft.AspNet.Razor"] = "Razor engine is built into ASP.NET Core",
+        // Entity Framework 6 - replaced by EF Core
+        ["EntityFramework"] = "Replaced by Microsoft.EntityFrameworkCore",
+        ["EntityFramework.SqlServer"] = "Replaced by Microsoft.EntityFrameworkCore.SqlServer",
+        // ASP.NET MVC 5 bundling - obsolete in ASP.NET Core
+        ["Microsoft.AspNet.Web.Optimization"] = "Bundling/minification handled differently in ASP.NET Core",
+        ["WebGrease"] = "Used by old bundling, not needed in ASP.NET Core",
+        ["Antlr"] = "Used by old bundling, not needed in ASP.NET Core",
+        ["Respond"] = "IE8 polyfill, not needed for modern browsers",
+        ["Modernizr"] = "Browser detection rarely needed in modern web apps",
+        // PagedList - replaced by X.PagedList
+        ["PagedList"] = "Replaced by X.PagedList.Mvc.Core",
+        ["PagedList.Mvc"] = "Replaced by X.PagedList.Mvc.Core",
+        // Old ApplicationInsights - replaced by modern versions
+        ["Microsoft.ApplicationInsights.Agent.Intercept"] = "Replaced by modern Application Insights SDK",
+        ["Microsoft.ApplicationInsights.DependencyCollector"] = "Replaced by modern Application Insights SDK",
+        ["Microsoft.ApplicationInsights.PerfCounterCollector"] = "Replaced by modern Application Insights SDK",
+        ["Microsoft.ApplicationInsights.Web"] = "Replaced by Microsoft.ApplicationInsights.AspNetCore",
+        ["Microsoft.ApplicationInsights.WindowsServer"] = "Replaced by modern Application Insights SDK",
+        ["Microsoft.ApplicationInsights.WindowsServer.TelemetryChannel"] = "Replaced by modern Application Insights SDK"
     };
 
     // Packages that need to be replaced with modern equivalents
     private static readonly Dictionary<string, (string? NewPackageId, string? SuggestedVersion, string Reason)> PackageReplacements =
         new(StringComparer.OrdinalIgnoreCase)
         {
-            ["Microsoft.AspNet.Mvc"] = ("Microsoft.AspNetCore.Mvc", "2.2.0", "ASP.NET MVC 5 → ASP.NET Core MVC"),
-            ["Microsoft.AspNet.WebApi"] = ("Microsoft.AspNetCore.Mvc", "2.2.0", "WebAPI is unified with MVC in ASP.NET Core"),
-            ["Microsoft.AspNet.WebApi.Client"] = ("Microsoft.AspNetCore.Mvc", "2.2.0", "WebAPI client functionality in ASP.NET Core"),
-            ["Microsoft.AspNet.WebPages"] = ("Microsoft.AspNetCore.Mvc.Razor", "2.2.0", "Razor pages are part of ASP.NET Core MVC"),
-            ["System.Net.Http"] = ("System.Net.Http", null, "Updated version for modern .NET"),
-            ["System.ValueTuple"] = (null, null, "ValueTuple is built into modern .NET") // Will be removed
+            ["Microsoft.AspNet.Mvc"] = (null, null, "ASP.NET Core MVC is included with Microsoft.NET.Sdk.Web"),
+            ["Microsoft.AspNet.WebApi"] = (null, null, "WebAPI is included with Microsoft.NET.Sdk.Web"),
+            ["Microsoft.AspNet.WebApi.Client"] = (null, null, "HTTP client functionality built into .NET"),
+            ["Microsoft.AspNet.WebApi.Core"] = (null, null, "WebAPI is included with Microsoft.NET.Sdk.Web"),
+            ["Microsoft.AspNet.WebPages"] = (null, null, "Razor pages included with Microsoft.NET.Sdk.Web"),
+            ["System.Net.Http"] = (null, null, "Built into modern .NET"),
+            ["System.ValueTuple"] = (null, null, "ValueTuple is built into modern .NET"),
+            ["Microsoft.ApplicationInsights"] = ("Microsoft.ApplicationInsights.AspNetCore", "2.22.0", "Modern Application Insights for ASP.NET Core"),
+            ["Microsoft.jQuery.Unobtrusive.Validation"] = (null, null, "jQuery validation handled via npm/CDN in modern apps"),
+            ["Newtonsoft.Json"] = ("Newtonsoft.Json", "13.0.3", "Upgraded to latest secure version")
         };
 
     // Analyzers and development-only packages that need PrivateAssets

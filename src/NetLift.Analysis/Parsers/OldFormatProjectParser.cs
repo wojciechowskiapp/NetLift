@@ -11,6 +11,21 @@ public class OldFormatProjectParser : IProjectParser
 {
     private static readonly XNamespace MsBuildNamespace = "http://schemas.microsoft.com/developer/msbuild/2003";
 
+    // Files to exclude from migration (cause conflicts or are obsolete in .NET Core)
+    private static readonly HashSet<string> ExcludedFiles = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "AssemblyInfo.cs",     // Conflicts with SDK auto-generated assembly info
+        "Global.asax.cs",      // Replaced by Program.cs in ASP.NET Core
+    };
+
+    // Directories to exclude from migration
+    private static readonly HashSet<string> ExcludedDirectories = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "Migrations",      // EF6 migrations are incompatible with EF Core
+        "App_Start",       // ASP.NET MVC specific, obsolete in Core
+        "Properties"       // AssemblyInfo.cs is in Properties folder
+    };
+
     /// <inheritdoc/>
     public bool CanParse(string projectPath)
     {
@@ -277,6 +292,20 @@ public class OldFormatProjectParser : IProjectParser
         {
             var includeAttr = item.Attribute("Include")?.Value;
             if (string.IsNullOrEmpty(includeAttr))
+            {
+                continue;
+            }
+
+            // Skip excluded files (AssemblyInfo.cs, Global.asax.cs, etc.)
+            var fileName = Path.GetFileName(includeAttr);
+            if (ExcludedFiles.Contains(fileName))
+            {
+                continue;
+            }
+
+            // Skip files in excluded directories (Migrations, App_Start, Properties)
+            var pathParts = includeAttr.Split(new[] { '/', '\\' }, StringSplitOptions.RemoveEmptyEntries);
+            if (pathParts.Length > 1 && ExcludedDirectories.Contains(pathParts[0]))
             {
                 continue;
             }

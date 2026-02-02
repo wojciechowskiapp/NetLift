@@ -31,9 +31,19 @@ public class PackagesConfigParser : IPackagesConfigParser
                 .Where(p => !string.IsNullOrWhiteSpace(p.Id))
                 .ToList();
         }
-        catch (Exception)
+        catch (System.Xml.XmlException)
         {
-            // If we can't parse the file (malformed XML, etc.), return empty list
+            // Malformed XML - return empty list
+            return new List<PackageReference>();
+        }
+        catch (IOException)
+        {
+            // File access issue - return empty list
+            return new List<PackageReference>();
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Permission denied - return empty list
             return new List<PackageReference>();
         }
     }

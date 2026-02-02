@@ -10,6 +10,7 @@ public static class MvcNamespaceMappings
     /// </summary>
     public static IReadOnlyDictionary<string, string> Mappings { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
     {
+        // ASP.NET MVC → ASP.NET Core MVC
         ["System.Web.Mvc"] = "Microsoft.AspNetCore.Mvc",
         ["System.Web.Mvc.Ajax"] = "Microsoft.AspNetCore.Mvc",
         ["System.Web.Mvc.Async"] = "Microsoft.AspNetCore.Mvc",
@@ -19,7 +20,19 @@ public static class MvcNamespaceMappings
         ["System.Web.Mvc.ModelBinding"] = "Microsoft.AspNetCore.Mvc.ModelBinding",
         ["System.Web.WebPages"] = "Microsoft.AspNetCore.Mvc.Razor",
         ["System.Web.Helpers"] = "Microsoft.AspNetCore.Mvc.Rendering",
-        ["System.Web.Optimization"] = "WebOptimizer"
+        ["System.Web.Optimization"] = "WebOptimizer",
+        // Entity Framework 6 → Entity Framework Core
+        ["System.Data.Entity"] = "Microsoft.EntityFrameworkCore",
+        ["System.Data.Entity.Infrastructure"] = "Microsoft.EntityFrameworkCore.Infrastructure",
+        ["System.Data.Entity.ModelConfiguration"] = "Microsoft.EntityFrameworkCore",
+        ["System.Data.Entity.ModelConfiguration.Conventions"] = "Microsoft.EntityFrameworkCore",
+        ["System.Data.Entity.Migrations"] = "Microsoft.EntityFrameworkCore.Migrations",
+        ["System.Data.Entity.Validation"] = "Microsoft.EntityFrameworkCore",
+        // System.Data for SqlClient
+        ["System.Data.SqlClient"] = "Microsoft.Data.SqlClient",
+        // PagedList → X.PagedList (ASP.NET Core compatible)
+        ["PagedList"] = "X.PagedList",
+        ["PagedList.Mvc"] = "X.PagedList.Mvc.Core"
     };
 
     /// <summary>
