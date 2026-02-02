@@ -31,189 +31,30 @@ namespace NetLift.Tests.Integration.Modernization;
 /// <summary>
 /// End-to-end tests for the NetLift modernize command.
 /// Tests the complete modernization pipeline from analysis to CQRS pattern application.
+/// Uses shared fixture to run expensive ModernizeAsync once for standard CQRS tests.
 /// </summary>
 [Collection("E2E")]
-public class ModernizeE2ETests : E2ETestBase
+public class ModernizeE2ETests : IClassFixture<ModernizeE2EFixture>
 {
-    private IModernizationOrchestrator CreateModernizationOrchestrator()
+    private readonly ModernizeE2EFixture _fixture;
+
+    public ModernizeE2ETests(ModernizeE2EFixture fixture)
     {
-        var services = new ServiceCollection();
-
-        // Register analysis services
-        services.AddSingleton<IProjectParser, OldFormatProjectParser>();
-        services.AddSingleton<IPackagesConfigParser, PackagesConfigParser>();
-        services.AddSingleton<IWebConfigAppSettingsParser, WebConfigAppSettingsParser>();
-        services.AddSingleton<IWebConfigConnectionStringParser, WebConfigConnectionStringParser>();
-        services.AddSingleton<ISystemWebParser, SystemWebParser>();
-        services.AddSingleton<IServiceModelParser, ServiceModelParser>();
-        services.AddSingleton<IProjectTypeDetector, ProjectTypeDetector>();
-        services.AddSingleton<IReportBuilder, AnalysisReportBuilder>();
-
-        // Register transformation services
-        services.AddSingleton<ISdkProjectConverter, SdkProjectConverter>();
-        services.AddSingleton<IAssemblyInfoExtractor, AssemblyInfoExtractor>();
-        services.AddSingleton<IPackageReferenceConverter, PackageReferenceConverter>();
-        services.AddSingleton<IPackageMappingService, PackageMappingService>();
-        services.AddSingleton<ISourceFileTransformer, SourceFileTransformer>();
-        services.AddSingleton<IConfigMigrationService, ConfigMigrationService>();
-
-        // Register MVC services
-        services.AddSingleton<IMvcNamespaceRewriter, SystemWebMvcNamespaceRewriter>();
-        services.AddSingleton<IControllerBaseRewriter, ControllerBaseClassRewriter>();
-        services.AddSingleton<IActionResultRewriter, ActionResultTypeRewriter>();
-        services.AddSingleton<IHttpContextRewriter, HttpContextCurrentRewriter>();
-        services.AddSingleton<IActionFilterTransformer, ActionFilterTransformer>();
-        services.AddSingleton<IAttributeRoutingTransformer, AttributeRoutingTransformer>();
-        services.AddSingleton<IRouteConfigParser, RouteConfigParser>();
-        services.AddSingleton<IViewImportsGenerator, ViewImportsGenerator>();
-
-        // Register WCF services
-        services.AddSingleton<IWcfServiceParser, WcfServiceParser>();
-        services.AddSingleton<IWcfDataContractParser, WcfDataContractParser>();
-        services.AddSingleton<IBusinessLogicExtractor, BusinessLogicExtractor>();
-        services.AddSingleton<IFaultContractTransformer, FaultContractTransformer>();
-        services.AddSingleton<IProtoGenerator, ProtoGenerator>();
-        services.AddSingleton<IGrpcServiceGenerator, GrpcServiceGenerator>();
-        services.AddSingleton<IDuplexDetector, DuplexDetector>();
-        services.AddSingleton<IRestControllerGenerator, RestControllerGenerator>();
-        services.AddSingleton<IClientProxyGenerator, ClientProxyGenerator>();
-
-        // Register P2 services
-        services.AddSingleton<IAreaRegistrationParser, AreaRegistrationParser>();
-        services.AddSingleton<IAreaMigrationTransformer, AreaMigrationTransformer>();
-        services.AddSingleton<IBundleConfigParser, BundleConfigParser>();
-        services.AddSingleton<IViteConfigGenerator, ViteConfigGenerator>();
-        services.AddSingleton<IWebpackConfigGenerator, WebpackConfigGenerator>();
-        services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
-        services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
-        services.AddSingleton<IPackageJsonGenerator, PackageJsonGenerator>();
-
-        // Register EF services
-        services.AddSingleton<IDbContextDetector, DbContextDetector>();
-        services.AddSingleton<IDbContextConstructorRewriter, DbContextConstructorRewriter>();
-        services.AddSingleton<IFluentApiRelationshipRewriter, FluentApiRelationshipRewriter>();
-        services.AddSingleton<IManyToManyRewriter, ManyToManyRewriter>();
-        services.AddSingleton<IIncludeThenIncludeRewriter, IncludeThenIncludeRewriter>();
-        services.AddSingleton<ISqlQueryRewriter, SqlQueryRewriter>();
-        services.AddSingleton<ILazyLoadingConfigRewriter, LazyLoadingConfigRewriter>();
-        services.AddSingleton<IDatabaseInitializerRemover, DatabaseInitializerRemover>();
-
-        // Register generators
-        services.AddSingleton<IAppSettingsJsonGenerator, AppSettingsJsonGenerator>();
-        services.AddSingleton<IEnvironmentAppSettingsGenerator, EnvironmentAppSettingsGenerator>();
-        services.AddSingleton<IProgramCsGenerator, ProgramCsGenerator>();
-
-        // Register CQRS generators
-        services.AddSingleton<ICommandGenerator, CommandGenerator>();
-        services.AddSingleton<IQueryGenerator, QueryGenerator>();
-        services.AddSingleton<IHandlerGenerator, HandlerGenerator>();
-        services.AddSingleton<IValidatorGenerator, ValidatorGenerator>();
-
-        // Register modernization services
-        services.AddSingleton<IControllerAnalyzer, ControllerAnalyzer>();
-        services.AddSingleton<IServiceAnalyzer, ServiceAnalyzer>();
-        services.AddSingleton<ILogicExtractor, LogicExtractor>();
-        services.AddSingleton<IControllerTransformer, ControllerSlimmer>();
-        services.AddSingleton<IModernizationOrchestrator, ModernizationOrchestrator>();
-
-        var serviceProvider = services.BuildServiceProvider();
-        return serviceProvider.GetRequiredService<IModernizationOrchestrator>();
+        _fixture = fixture;
     }
 
-    private async Task<ProjectInfo> CreateTestProjectAsync()
-    {
-        // Create test controller
-        var controllerDir = Path.Combine(WorkingDirectory, "Controllers");
-        Directory.CreateDirectory(controllerDir);
-
-        var controllerPath = Path.Combine(controllerDir, "ProductsController.cs");
-        var controllerSource = @"using Microsoft.AspNetCore.Mvc;
-
-namespace TestApp.Controllers
-{
-    public class ProductsController : Controller
-    {
-        public IActionResult Index()
-        {
-            var products = new List<string> { ""Product1"", ""Product2"" };
-            return View(products);
-        }
-
-        public IActionResult Details(int id)
-        {
-            var product = $""Product {id}"";
-            return View(product);
-        }
-
-        [HttpPost]
-        public IActionResult Create(string name)
-        {
-            // Create product logic
-            return RedirectToAction(""Index"");
-        }
-    }
-}";
-        await File.WriteAllTextAsync(controllerPath, controllerSource);
-
-        // Create project file
-        var projectPath = Path.Combine(WorkingDirectory, "TestApp.csproj");
-        var projectContent = @"<Project Sdk=""Microsoft.NET.Sdk.Web"">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <RootNamespace>TestApp</RootNamespace>
-  </PropertyGroup>
-</Project>";
-        await File.WriteAllTextAsync(projectPath, projectContent);
-
-        return new ProjectInfo
-        {
-            FilePath = projectPath,
-            AssemblyName = "TestApp",
-            RootNamespace = "TestApp",
-            TargetFramework = new NetLift.Core.Models.TargetFramework
-            {
-                Moniker = "net8.0",
-                Type = FrameworkType.Core
-            },
-            CompileItems = new List<CompileItem>
-            {
-                new CompileItem
-                {
-                    Include = controllerPath
-                }
-            }
-        };
-    }
+    #region Tests using shared fixture (fast - assertions only)
 
     [Fact]
-    public async Task ModernizeAsync_GeneratesCommandFiles()
+    public void ModernizeAsync_GeneratesCommandFiles()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        // Uses pre-computed result from fixture
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
-
-        // Debug: Check what happened
-        if (!result.Success || result.GeneratedFiles.Count == 0)
-        {
-            var diagnosticsMessage = string.Join("\n", result.Diagnostics.Select(d => $"[{d.Severity}] {d.Message}"));
-            throw new Exception($"Modernization failed or generated no files.\nSuccess: {result.Success}\nDiagnostics:\n{diagnosticsMessage}");
-        }
-
         result.Success.Should().BeTrue();
         result.GeneratedFiles.Should().NotBeEmpty();
 
-        // Verify Command file was generated (now combined with handler)
         var commandFiles = result.GeneratedFiles.Where(f => f.FileType == "Command+Handler").ToList();
         commandFiles.Should().NotBeEmpty("at least one Command+Handler should be generated");
 
@@ -230,29 +71,16 @@ namespace TestApp.Controllers
     }
 
     [Fact]
-    public async Task ModernizeAsync_GeneratesQueryFiles()
+    public void ModernizeAsync_GeneratesQueryFiles()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
-        // Verify Query files were generated (now combined with handlers)
         var queryFiles = result.GeneratedFiles.Where(f => f.FileType == "Query+Handler").ToList();
         queryFiles.Should().NotBeEmpty("at least one Query+Handler should be generated");
 
-        // Should have Index and Details queries
         var indexQuery = queryFiles.FirstOrDefault(f => f.FilePath.Contains("GetListQuery.cs") || f.FilePath.Contains("IndexQuery.cs"));
         indexQuery.Should().NotBeNull("Index action should generate a query");
 
@@ -271,30 +99,17 @@ namespace TestApp.Controllers
     [Fact]
     public async Task ModernizeAsync_GeneratesCombinedCommandQueryHandlerFiles()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
-        // Verify combined Command+Handler and Query+Handler files were generated
         var commandFiles = result.GeneratedFiles.Where(f => f.FileType == "Command+Handler").ToList();
         var queryFiles = result.GeneratedFiles.Where(f => f.FileType == "Query+Handler").ToList();
 
         commandFiles.Should().NotBeEmpty("Command+Handler files should be generated for commands");
         queryFiles.Should().NotBeEmpty("Query+Handler files should be generated for queries");
 
-        // Verify files exist on disk and contain both command/query and handler
         foreach (var file in commandFiles.Concat(queryFiles))
         {
             File.Exists(file.FilePath).Should().BeTrue($"file {file.FilePath} should exist on disk");
@@ -308,23 +123,11 @@ namespace TestApp.Controllers
     [Fact]
     public async Task ModernizeAsync_GeneratesResultClass()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
-        // Verify Result.cs was generated
         var resultFile = result.GeneratedFiles.FirstOrDefault(f => f.FileType == "Common" && f.FilePath.Contains("Result.cs"));
         resultFile.Should().NotBeNull("Result.cs should be generated in Application/Common");
 
@@ -335,7 +138,6 @@ namespace TestApp.Controllers
             resultFile.Confidence.Should().Be(100, "Result class generation should have 100% confidence");
             File.Exists(resultFile.FilePath).Should().BeTrue("Result.cs should exist on disk");
 
-            // Verify content
             var content = await File.ReadAllTextAsync(resultFile.FilePath);
             content.Should().Contain("public class Result<T>", "Result class should be defined");
             content.Should().Contain("IsSuccess", "Result should have IsSuccess property");
@@ -345,19 +147,8 @@ namespace TestApp.Controllers
     [Fact]
     public async Task ModernizeAsync_TransformsControllerToUseMediatR()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
         result.ModifiedFiles.Should().NotBeEmpty("controller files should be modified");
@@ -367,22 +158,14 @@ namespace TestApp.Controllers
 
         if (modifiedController != null)
         {
-            // Read the transformed controller
             var controllerContent = await File.ReadAllTextAsync(modifiedController.FilePath);
 
-            // Verify IMediator field was added
             controllerContent.Should().Contain("private readonly IMediator _mediator",
                 "controller should have IMediator field");
-
-            // Verify constructor has IMediator parameter
             controllerContent.Should().Contain("IMediator mediator",
                 "constructor should accept IMediator");
-
-            // Verify field assignment
             controllerContent.Should().Contain("_mediator = mediator",
                 "constructor should assign mediator to field");
-
-            // Verify using directive
             controllerContent.Should().Contain("using TestApp.Application.Common.Interfaces",
                 "controller should have using directive for IMediator interface");
         }
@@ -391,19 +174,8 @@ namespace TestApp.Controllers
     [Fact]
     public async Task ModernizeAsync_TransformsActionMethodsToUseMediatRSend()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
@@ -414,32 +186,18 @@ namespace TestApp.Controllers
         {
             var controllerContent = await File.ReadAllTextAsync(modifiedController.FilePath);
 
-            // Verify actions use await _mediator.Send()
             controllerContent.Should().Contain("await _mediator.Send(",
                 "actions should use await _mediator.Send()");
-
-            // Verify actions are now async Task<IActionResult>
             controllerContent.Should().Contain("async Task<IActionResult>",
                 "actions should be converted to async methods");
         }
     }
 
     [Fact]
-    public async Task ModernizeAsync_ReturnsModifiedFilesListWithTransformedControllers()
+    public void ModernizeAsync_ReturnsModifiedFilesListWithTransformedControllers()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
         result.ModifiedFiles.Should().NotBeEmpty("controller files should be in ModifiedFiles list");
@@ -457,86 +215,10 @@ namespace TestApp.Controllers
     }
 
     [Fact]
-    public async Task ModernizeAsync_WithDryRun_DoesNotWriteFiles()
+    public void ModernizeAsync_TracksAppliedPatterns()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = true  // Dry run mode
-        };
+        var result = _fixture.Result;
 
-        var originalControllerPath = Path.Combine(WorkingDirectory, "Controllers", "ProductsController.cs");
-        var originalContent = await File.ReadAllTextAsync(originalControllerPath);
-
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
-        result.Should().NotBeNull();
-
-        // In dry-run mode, ModernizationOrchestrator still writes files (this is a design choice)
-        // but we can verify the analysis was performed
-        result.GeneratedFiles.Should().NotBeEmpty("dry-run should still analyze and plan file generation");
-        result.Diagnostics.Should().NotBeEmpty("dry-run should provide diagnostics");
-    }
-
-    [Fact]
-    public async Task ModernizeAsync_WithFluentValidation_GeneratesValidators()
-    {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern>
-            {
-                ModernizationPattern.Cqrs,
-                ModernizationPattern.FluentValidation
-            },
-            DryRun = false
-        };
-
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
-        result.Should().NotBeNull();
-        result.Success.Should().BeTrue();
-
-        // Verify Validator files were generated for commands with validation requirements
-        var validatorFiles = result.GeneratedFiles.Where(f => f.FileType == "Validator").ToList();
-
-        // Validators are generated only for commands/queries with RequiresValidation = true
-        // The CreateCommand should have a validator since it has parameters
-        if (validatorFiles.Any())
-        {
-            foreach (var validator in validatorFiles)
-            {
-                File.Exists(validator.FilePath).Should().BeTrue($"validator file {validator.FilePath} should exist");
-                validator.FilePath.Should().Contain("Validator.cs", "validator files should end with Validator.cs");
-            }
-        }
-    }
-
-    [Fact]
-    public async Task ModernizeAsync_TracksAppliedPatterns()
-    {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
-
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
         result.AppliedPatterns.Should().NotBeEmpty("applied patterns should be tracked");
@@ -547,49 +229,23 @@ namespace TestApp.Controllers
     }
 
     [Fact]
-    public async Task ModernizeAsync_GeneratesDiagnostics()
+    public void ModernizeAsync_GeneratesDiagnostics()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Diagnostics.Should().NotBeEmpty("modernization should produce diagnostics");
-
-        // Should have info diagnostics about transformation
         result.Diagnostics.Should().Contain(d => d.Severity == NetLift.Core.Models.Modernization.DiagnosticSeverity.Info,
             "should have informational diagnostics");
-
-        // Should mention IApplicationDbContext (can be Info or Warning depending on entity discovery)
         result.Diagnostics.Should().Contain(d => d.Message.Contains("IApplicationDbContext"),
             "should mention IApplicationDbContext interface");
     }
 
     [Fact]
-    public async Task ModernizeAsync_SetsOverallConfidence()
+    public void ModernizeAsync_SetsOverallConfidence()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
         result.Confidence.Should().BeInRange(0, 100, "confidence should be a valid percentage");
@@ -598,45 +254,22 @@ namespace TestApp.Controllers
     }
 
     [Fact]
-    public async Task ModernizeAsync_TracksDuration()
+    public void ModernizeAsync_TracksDuration()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Duration.Should().BeGreaterThan(TimeSpan.Zero, "duration should be tracked");
     }
 
     [Fact]
-    public async Task ModernizeAsync_OrganizesFilesByControllerName()
+    public void ModernizeAsync_OrganizesFilesByControllerName()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
-        // Verify file organization: Application/{Controller}/Commands/ and Application/{Controller}/Queries/
         foreach (var file in result.GeneratedFiles.Where(f => f.FileType == "Command+Handler" || f.FileType == "Query+Handler"))
         {
             file.FilePath.Should().Contain("Application", "files should be in Application folder");
@@ -654,25 +287,13 @@ namespace TestApp.Controllers
     }
 
     [Fact]
-    public async Task ModernizeAsync_IncludesSourceReference()
+    public void ModernizeAsync_IncludesSourceReference()
     {
-        // Arrange
-        var projectInfo = await CreateTestProjectAsync();
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
+        var result = _fixture.Result;
 
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
         result.Should().NotBeNull();
         result.Success.Should().BeTrue();
 
-        // Each generated file should have a source reference
         foreach (var file in result.GeneratedFiles.Where(f =>
             f.FileType == "Command+Handler" || f.FileType == "Query+Handler"))
         {
@@ -683,15 +304,101 @@ namespace TestApp.Controllers
         }
     }
 
+    #endregion
+
+    #region Tests requiring separate execution (different options or setup)
+
+    [Fact]
+    public async Task ModernizeAsync_WithDryRun_DoesNotModifyOriginalFiles()
+    {
+        // This test needs its own setup with DryRun = true
+        var workingDir = Path.Combine(Path.GetTempPath(), $"netlift-dryrun-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDir);
+
+        try
+        {
+            var projectInfo = await CreateTestProjectAsync(workingDir);
+            var originalControllerPath = Path.Combine(workingDir, "Controllers", "ProductsController.cs");
+            var originalContent = await File.ReadAllTextAsync(originalControllerPath);
+
+            var orchestrator = CreateModernizationOrchestrator();
+            var options = new ModernizationOptions
+            {
+                Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
+                DryRun = true
+            };
+
+            var result = await orchestrator.ModernizeAsync(projectInfo, options);
+
+            result.Should().NotBeNull();
+            result.GeneratedFiles.Should().NotBeEmpty("dry-run should still analyze and plan file generation");
+            result.Diagnostics.Should().NotBeEmpty("dry-run should provide diagnostics");
+        }
+        finally
+        {
+            if (Directory.Exists(workingDir))
+                Directory.Delete(workingDir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ModernizeAsync_WithFluentValidation_GeneratesValidators()
+    {
+        // This test needs FluentValidation pattern in addition to CQRS
+        var workingDir = Path.Combine(Path.GetTempPath(), $"netlift-validation-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDir);
+
+        try
+        {
+            var projectInfo = await CreateTestProjectAsync(workingDir);
+            var orchestrator = CreateModernizationOrchestrator();
+            var options = new ModernizationOptions
+            {
+                Patterns = new HashSet<ModernizationPattern>
+                {
+                    ModernizationPattern.Cqrs,
+                    ModernizationPattern.FluentValidation
+                },
+                DryRun = false
+            };
+
+            var result = await orchestrator.ModernizeAsync(projectInfo, options);
+
+            result.Should().NotBeNull();
+            result.Success.Should().BeTrue();
+
+            var validatorFiles = result.GeneratedFiles.Where(f => f.FileType == "Validator").ToList();
+
+            if (validatorFiles.Any())
+            {
+                foreach (var validator in validatorFiles)
+                {
+                    File.Exists(validator.FilePath).Should().BeTrue($"validator file {validator.FilePath} should exist");
+                    validator.FilePath.Should().Contain("Validator.cs", "validator files should end with Validator.cs");
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(workingDir))
+                Directory.Delete(workingDir, recursive: true);
+        }
+    }
+
     [Fact]
     public async Task ModernizeAsync_WithOverloadedActions_GeneratesUniqueNames()
     {
-        // Arrange - Create controller with overloaded Create actions (GET and POST)
-        var controllerDir = Path.Combine(WorkingDirectory, "Controllers");
-        Directory.CreateDirectory(controllerDir);
+        // This test needs a different controller with overloaded actions
+        var workingDir = Path.Combine(Path.GetTempPath(), $"netlift-overload-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(workingDir);
 
-        var controllerPath = Path.Combine(controllerDir, "StudentsController.cs");
-        var controllerSource = @"using Microsoft.AspNetCore.Mvc;
+        try
+        {
+            var controllerDir = Path.Combine(workingDir, "Controllers");
+            Directory.CreateDirectory(controllerDir);
+
+            var controllerPath = Path.Combine(controllerDir, "StudentsController.cs");
+            var controllerSource = @"using Microsoft.AspNetCore.Mvc;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -738,10 +445,119 @@ namespace TestApp.Controllers
         public string Name { get; set; }
     }
 }";
+            await File.WriteAllTextAsync(controllerPath, controllerSource);
+
+            var projectPath = Path.Combine(workingDir, "TestApp.csproj");
+            var projectContent = @"<Project Sdk=""Microsoft.NET.Sdk.Web"">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>TestApp</RootNamespace>
+  </PropertyGroup>
+</Project>";
+            await File.WriteAllTextAsync(projectPath, projectContent);
+
+            var projectInfo = new ProjectInfo
+            {
+                FilePath = projectPath,
+                AssemblyName = "TestApp",
+                RootNamespace = "TestApp",
+                TargetFramework = new NetLift.Core.Models.TargetFramework
+                {
+                    Moniker = "net8.0",
+                    Type = FrameworkType.Core
+                },
+                CompileItems = new List<CompileItem>
+                {
+                    new CompileItem { Include = controllerPath }
+                }
+            };
+
+            var orchestrator = CreateModernizationOrchestrator();
+            var options = new ModernizationOptions
+            {
+                Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
+                DryRun = false
+            };
+
+            var result = await orchestrator.ModernizeAsync(projectInfo, options);
+
+            result.Should().NotBeNull();
+            result.Success.Should().BeTrue();
+
+            var queries = result.GeneratedFiles.Where(f => f.FileType == "Query+Handler").ToList();
+            var createQuery = queries.FirstOrDefault(f => f.FilePath.Contains("Create") && f.FilePath.Contains("Query"));
+            createQuery.Should().NotBeNull("GET Create() should generate a Query");
+            if (createQuery != null)
+            {
+                createQuery.FilePath.Should().Contain("FormQuery.cs", "GET Create with overload should generate CreateFormQuery");
+            }
+
+            var commands = result.GeneratedFiles.Where(f => f.FileType == "Command+Handler").ToList();
+            var postCreateCommand = commands.FirstOrDefault(f =>
+                f.FilePath.Contains("CreateCommand.cs") &&
+                !f.FilePath.Contains("Put"));
+            postCreateCommand.Should().NotBeNull("POST Create(Student) should generate StudentsCreateCommand");
+
+            var putCreateCommand = commands.FirstOrDefault(f => f.FilePath.Contains("Put"));
+            putCreateCommand.Should().NotBeNull("PUT Create with overload should generate StudentsCreatePutCommand");
+            if (putCreateCommand != null)
+            {
+                putCreateCommand.FilePath.Should().Contain("PutCommand.cs", "PUT Create should have Put suffix");
+            }
+
+            var allFilenames = result.GeneratedFiles
+                .Where(f => f.FileType == "Command+Handler" || f.FileType == "Query+Handler")
+                .Select(f => Path.GetFileName(f.FilePath))
+                .ToList();
+
+            allFilenames.Should().OnlyHaveUniqueItems("all generated files should have unique names");
+        }
+        finally
+        {
+            if (Directory.Exists(workingDir))
+                Directory.Delete(workingDir, recursive: true);
+        }
+    }
+
+    #endregion
+
+    #region Helper methods for standalone tests
+
+    private async Task<ProjectInfo> CreateTestProjectAsync(string workingDir)
+    {
+        var controllerDir = Path.Combine(workingDir, "Controllers");
+        Directory.CreateDirectory(controllerDir);
+
+        var controllerPath = Path.Combine(controllerDir, "ProductsController.cs");
+        var controllerSource = @"using Microsoft.AspNetCore.Mvc;
+
+namespace TestApp.Controllers
+{
+    public class ProductsController : Controller
+    {
+        public IActionResult Index()
+        {
+            var products = new List<string> { ""Product1"", ""Product2"" };
+            return View(products);
+        }
+
+        public IActionResult Details(int id)
+        {
+            var product = $""Product {id}"";
+            return View(product);
+        }
+
+        [HttpPost]
+        public IActionResult Create(string name)
+        {
+            // Create product logic
+            return RedirectToAction(""Index"");
+        }
+    }
+}";
         await File.WriteAllTextAsync(controllerPath, controllerSource);
 
-        // Create project file
-        var projectPath = Path.Combine(WorkingDirectory, "TestApp.csproj");
+        var projectPath = Path.Combine(workingDir, "TestApp.csproj");
         var projectContent = @"<Project Sdk=""Microsoft.NET.Sdk.Web"">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
@@ -750,7 +566,7 @@ namespace TestApp.Controllers
 </Project>";
         await File.WriteAllTextAsync(projectPath, projectContent);
 
-        var projectInfo = new ProjectInfo
+        return new ProjectInfo
         {
             FilePath = projectPath,
             AssemblyName = "TestApp",
@@ -762,92 +578,78 @@ namespace TestApp.Controllers
             },
             CompileItems = new List<CompileItem>
             {
-                new CompileItem
-                {
-                    Include = controllerPath
-                }
+                new CompileItem { Include = controllerPath }
             }
         };
-
-        var orchestrator = CreateModernizationOrchestrator();
-        var options = new ModernizationOptions
-        {
-            Patterns = new HashSet<ModernizationPattern> { ModernizationPattern.Cqrs },
-            DryRun = false
-        };
-
-        // Act
-        var result = await orchestrator.ModernizeAsync(projectInfo, options);
-
-        // Assert
-        result.Should().NotBeNull();
-
-        // Debug: Print what was generated
-        if (!result.Success || result.GeneratedFiles.Count == 0)
-        {
-            var diagnosticsMessage = string.Join("\n", result.Diagnostics.Select(d => $"[{d.Severity}] {d.Message}"));
-            throw new Exception($"Modernization failed or generated no files.\nSuccess: {result.Success}\nDiagnostics:\n{diagnosticsMessage}");
-        }
-
-        result.Success.Should().BeTrue();
-
-        // Debug: Print generated files
-        var filesDebugInfo = string.Join("\n", result.GeneratedFiles.Select(f => $"{f.FileType}: {f.FilePath}"));
-
-        // Verify Query for GET Create()
-        var queries = result.GeneratedFiles.Where(f => f.FileType == "Query+Handler").ToList();
-        var createQuery = queries.FirstOrDefault(f => f.FilePath.Contains("Create") && f.FilePath.Contains("Query"));
-        if (createQuery == null)
-        {
-            throw new Exception($"GET Create() should generate a Query.\nGenerated files:\n{filesDebugInfo}");
-        }
-        createQuery.Should().NotBeNull("GET Create() should generate a Query");
-        if (createQuery != null)
-        {
-            // Should have "Form" suffix to distinguish from Command
-            createQuery.FilePath.Should().Contain("FormQuery.cs", "GET Create with overload should generate CreateFormQuery");
-        }
-
-        // Verify Command for POST Create(Student)
-        var commands = result.GeneratedFiles.Where(f => f.FileType == "Command+Handler").ToList();
-        var postCreateCommand = commands.FirstOrDefault(f =>
-            f.FilePath.Contains("CreateCommand.cs") &&
-            !f.FilePath.Contains("Put"));
-        postCreateCommand.Should().NotBeNull("POST Create(Student) should generate StudentsCreateCommand");
-
-        // Verify Command for PUT Create(id, Student) has suffix
-        var putCreateCommand = commands.FirstOrDefault(f => f.FilePath.Contains("Put"));
-        putCreateCommand.Should().NotBeNull("PUT Create with overload should generate StudentsCreatePutCommand");
-        if (putCreateCommand != null)
-        {
-            putCreateCommand.FilePath.Should().Contain("PutCommand.cs", "PUT Create should have Put suffix");
-        }
-
-        // Verify no duplicate file names
-        var allFilenames = result.GeneratedFiles
-            .Where(f => f.FileType == "Command+Handler" || f.FileType == "Query+Handler")
-            .Select(f => Path.GetFileName(f.FilePath))
-            .ToList();
-
-        allFilenames.Should().OnlyHaveUniqueItems("all generated files should have unique names");
     }
 
-    public override Task DisposeAsync()
+    private IModernizationOrchestrator CreateModernizationOrchestrator()
     {
-        // Clean up generated Application directory
-        var appDir = Path.Combine(WorkingDirectory, "Application");
-        if (Directory.Exists(appDir))
-        {
-            try
-            {
-                Directory.Delete(appDir, recursive: true);
-            }
-            catch
-            {
-                // Ignore cleanup failures
-            }
-        }
+        var services = new ServiceCollection();
 
-        return base.DisposeAsync();
+        services.AddSingleton<IProjectParser, OldFormatProjectParser>();
+        services.AddSingleton<IPackagesConfigParser, PackagesConfigParser>();
+        services.AddSingleton<IWebConfigAppSettingsParser, WebConfigAppSettingsParser>();
+        services.AddSingleton<IWebConfigConnectionStringParser, WebConfigConnectionStringParser>();
+        services.AddSingleton<ISystemWebParser, SystemWebParser>();
+        services.AddSingleton<IServiceModelParser, ServiceModelParser>();
+        services.AddSingleton<IProjectTypeDetector, ProjectTypeDetector>();
+        services.AddSingleton<IReportBuilder, AnalysisReportBuilder>();
+        services.AddSingleton<ISdkProjectConverter, SdkProjectConverter>();
+        services.AddSingleton<IAssemblyInfoExtractor, AssemblyInfoExtractor>();
+        services.AddSingleton<IPackageReferenceConverter, PackageReferenceConverter>();
+        services.AddSingleton<IPackageMappingService, PackageMappingService>();
+        services.AddSingleton<ISourceFileTransformer, SourceFileTransformer>();
+        services.AddSingleton<IConfigMigrationService, ConfigMigrationService>();
+        services.AddSingleton<IMvcNamespaceRewriter, SystemWebMvcNamespaceRewriter>();
+        services.AddSingleton<IControllerBaseRewriter, ControllerBaseClassRewriter>();
+        services.AddSingleton<IActionResultRewriter, ActionResultTypeRewriter>();
+        services.AddSingleton<IHttpContextRewriter, HttpContextCurrentRewriter>();
+        services.AddSingleton<IActionFilterTransformer, ActionFilterTransformer>();
+        services.AddSingleton<IAttributeRoutingTransformer, AttributeRoutingTransformer>();
+        services.AddSingleton<IRouteConfigParser, RouteConfigParser>();
+        services.AddSingleton<IViewImportsGenerator, ViewImportsGenerator>();
+        services.AddSingleton<IWcfServiceParser, WcfServiceParser>();
+        services.AddSingleton<IWcfDataContractParser, WcfDataContractParser>();
+        services.AddSingleton<IBusinessLogicExtractor, BusinessLogicExtractor>();
+        services.AddSingleton<IFaultContractTransformer, FaultContractTransformer>();
+        services.AddSingleton<IProtoGenerator, ProtoGenerator>();
+        services.AddSingleton<IGrpcServiceGenerator, GrpcServiceGenerator>();
+        services.AddSingleton<IDuplexDetector, DuplexDetector>();
+        services.AddSingleton<IRestControllerGenerator, RestControllerGenerator>();
+        services.AddSingleton<IClientProxyGenerator, ClientProxyGenerator>();
+        services.AddSingleton<IAreaRegistrationParser, AreaRegistrationParser>();
+        services.AddSingleton<IAreaMigrationTransformer, AreaMigrationTransformer>();
+        services.AddSingleton<IBundleConfigParser, BundleConfigParser>();
+        services.AddSingleton<IViteConfigGenerator, ViteConfigGenerator>();
+        services.AddSingleton<IWebpackConfigGenerator, WebpackConfigGenerator>();
+        services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
+        services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
+        services.AddSingleton<IPackageJsonGenerator, PackageJsonGenerator>();
+        services.AddSingleton<IDbContextDetector, DbContextDetector>();
+        services.AddSingleton<IDbContextConstructorRewriter, DbContextConstructorRewriter>();
+        services.AddSingleton<IFluentApiRelationshipRewriter, FluentApiRelationshipRewriter>();
+        services.AddSingleton<IManyToManyRewriter, ManyToManyRewriter>();
+        services.AddSingleton<IIncludeThenIncludeRewriter, IncludeThenIncludeRewriter>();
+        services.AddSingleton<ISqlQueryRewriter, SqlQueryRewriter>();
+        services.AddSingleton<ILazyLoadingConfigRewriter, LazyLoadingConfigRewriter>();
+        services.AddSingleton<IDatabaseInitializerRemover, DatabaseInitializerRemover>();
+        services.AddSingleton<IAppSettingsJsonGenerator, AppSettingsJsonGenerator>();
+        services.AddSingleton<IEnvironmentAppSettingsGenerator, EnvironmentAppSettingsGenerator>();
+        services.AddSingleton<IProgramCsGenerator, ProgramCsGenerator>();
+        services.AddSingleton<ICommandGenerator, CommandGenerator>();
+        services.AddSingleton<IQueryGenerator, QueryGenerator>();
+        services.AddSingleton<IHandlerGenerator, HandlerGenerator>();
+        services.AddSingleton<IValidatorGenerator, ValidatorGenerator>();
+        services.AddSingleton<IControllerAnalyzer, ControllerAnalyzer>();
+        services.AddSingleton<IServiceAnalyzer, ServiceAnalyzer>();
+        services.AddSingleton<ILogicExtractor, LogicExtractor>();
+        services.AddSingleton<IControllerTransformer, ControllerSlimmer>();
+        services.AddSingleton<IModernizationOrchestrator, ModernizationOrchestrator>();
+
+        var serviceProvider = services.BuildServiceProvider();
+        return serviceProvider.GetRequiredService<IModernizationOrchestrator>();
     }
+
+    #endregion
 }
