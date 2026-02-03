@@ -19,10 +19,12 @@ public partial class RazorViewAnalyzer : IRazorViewAnalyzer
     [GeneratedRegex(@"@using\s*\(\s*Html\.BeginForm\s*\(([^)]*)\)\s*\)", RegexOptions.Compiled)]
     private static partial Regex BeginFormRegex();
 
-    [GeneratedRegex(@"@Html\.(TextBoxFor|TextAreaFor|PasswordFor|HiddenFor|CheckBoxFor|DropDownListFor|RadioButtonFor|EditorFor)\s*\(\s*(\w+)\s*=>\s*\2\.(\w+)(?:\s*,\s*new\s*\{([^}]*)\})?\s*\)", RegexOptions.Compiled)]
+    // Support nested properties like m => m.Address.City using ([\w.]+) instead of (\w+)
+    [GeneratedRegex(@"@Html\.(TextBoxFor|TextAreaFor|PasswordFor|HiddenFor|CheckBoxFor|DropDownListFor|RadioButtonFor|ListBoxFor|EditorFor)\s*\(\s*(\w+)\s*=>\s*\2\.([\w.]+)(?:\s*,\s*([^)]+))?\s*\)", RegexOptions.Compiled)]
     private static partial Regex InputForHelperRegex();
 
-    [GeneratedRegex(@"@Html\.(ValidationMessageFor|LabelFor|DisplayFor|DisplayNameFor)\s*\(\s*(\w+)\s*=>\s*\2\.(\w+)\s*\)", RegexOptions.Compiled)]
+    // Support nested properties and additional parameters
+    [GeneratedRegex(@"@Html\.(ValidationMessageFor|LabelFor|DisplayFor|DisplayNameFor)\s*\(\s*(\w+)\s*=>\s*\2\.([\w.]+)(?:\s*,\s*([^)]+))?\s*\)", RegexOptions.Compiled)]
     private static partial Regex SimpleForHelperRegex();
 
     [GeneratedRegex(@"@Html\.ValidationSummary\s*\(\s*(true|false)?\s*\)", RegexOptions.Compiled)]

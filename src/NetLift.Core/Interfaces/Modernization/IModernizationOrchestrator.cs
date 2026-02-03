@@ -16,7 +16,7 @@ public interface IModernizationOrchestrator
         ProjectInfo projectInfo,
         ModernizationOptions options,
         CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Executes modernization transformations on a project.
     /// </summary>

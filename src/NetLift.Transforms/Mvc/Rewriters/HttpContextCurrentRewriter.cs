@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
+using NetLift.Transforms.Common;
 using NetLift.Transforms.Mvc.Configuration;
 
 namespace NetLift.Transforms.Mvc.Rewriters;
@@ -69,7 +70,10 @@ public sealed class HttpContextCurrentRewriter : CSharpSyntaxRewriter, IHttpCont
         rewritten = AddHttpContextAccessorInjection(rewritten);
 
         // Add new using directives
-        rewritten = AddRequiredUsings(rewritten);
+        if (rewritten is CompilationUnitSyntax compilationUnit)
+        {
+            rewritten = compilationUnit.AddRequiredUsings(_requiredUsings);
+        }
 
         return rewritten.ToFullString();
     }
@@ -102,6 +106,27 @@ public sealed class HttpContextCurrentRewriter : CSharpSyntaxRewriter, IHttpCont
         _currentClassIsController = previousIsController;
 
         return visited;
+    }
+
+    /// <summary>
+    /// Visits identifier names to transform HttpContextBase to HttpContext.
+    /// HttpContextBase was an abstract base class in System.Web; in Core there's only HttpContext.
+    /// </summary>
+    public override SyntaxNode? VisitIdentifierName(IdentifierNameSyntax node)
+    {
+        // Transform HttpContextBase to HttpContext
+        if (node.Identifier.Text == "HttpContextBase")
+        {
+            _requiredUsings.Add("Microsoft.AspNetCore.Http");
+            _diagnostics.Add(new RewriterDiagnostic(
+                "Transformed HttpContextBase to HttpContext",
+                RewriterDiagnosticSeverity.Info));
+
+            return SyntaxFactory.IdentifierName("HttpContext")
+                .WithTriviaFrom(node);
+        }
+
+        return base.VisitIdentifierName(node);
     }
 
     /// <summary>
@@ -411,45 +436,6 @@ public sealed class HttpContextCurrentRewriter : CSharpSyntaxRewriter, IHttpCont
         return node.WithMembers(newMembers);
     }
 
-    /// <summary>
-    /// Adds required using directives that were identified during rewriting.
-    /// </summary>
-    private SyntaxNode AddRequiredUsings(SyntaxNode root)
-    {
-        if (_requiredUsings.Count == 0)
-        {
-            return root;
-        }
-
-        if (root is CompilationUnitSyntax compilationUnit)
-        {
-            var existingUsings = compilationUnit.Usings
-                .Select(u => u.Name?.ToString())
-                .Where(n => n != null)
-                .ToHashSet(StringComparer.Ordinal);
-
-            var newUsings = _requiredUsings
-                .Where(ns => !existingUsings.Contains(ns) && !string.IsNullOrWhiteSpace(ns))
-                .Select(ns =>
-                {
-                    var usingCode = $"using {ns};";
-                    var usingTree = CSharpSyntaxTree.ParseText(usingCode);
-                    var parsedUsing = usingTree.GetRoot()
-                        .DescendantNodes()
-                        .OfType<UsingDirectiveSyntax>()
-                        .First();
-                    return parsedUsing.WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
-                })
-                .ToList();
-
-            if (newUsings.Count > 0)
-            {
-                return compilationUnit.AddUsings(newUsings.ToArray());
-            }
-        }
-
-        return root;
-    }
 
     /// <summary>
     /// Holds context information about a class being processed.

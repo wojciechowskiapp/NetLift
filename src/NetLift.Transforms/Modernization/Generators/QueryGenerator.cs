@@ -1,17 +1,36 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces.Modernization;
 using NetLift.Core.Models.Modernization;
+using NetLift.Transforms.Modernization.Processors;
+using NetLift.Transforms.Modernization.Utilities;
+using System;
+using System.Linq;
 using System.Text;
 
 namespace NetLift.Transforms.Modernization.Generators;
 
 /// <summary>
-/// Generates CQRS Query and QueryHandler classes from controller actions.
+/// Generates production-ready, optimized CQRS Query and QueryHandler classes.
+/// Includes AsNoTracking, projection, logging, and caching support.
 /// </summary>
 public sealed class QueryGenerator : IQueryGenerator
 {
     private const string Indent = "    ";
     private const string DoubleIndent = "        ";
     private const string TripleIndent = "            ";
+    private const string QuadIndent = "                ";
+
+    /// <summary>
+    /// Options for query generation.
+    /// </summary>
+    public bool IncludeLogger { get; set; } = true;
+    public bool IncludeMapper { get; set; } = false;  // Default false - AutoMapper has commercial license
+    public bool UseAsNoTracking { get; set; } = true;
+    public bool UseProjectTo { get; set; } = false;   // Default false - use manual .Select() projection
+    public bool IncludeConfigureAwait { get; set; } = true;
+    public bool IncludeCachingSupport { get; set; } = false;
 
     /// <summary>
     /// Generates a Query class for an action.
@@ -22,26 +41,61 @@ public sealed class QueryGenerator : IQueryGenerator
     {
         ArgumentNullException.ThrowIfNull(queryInfo);
 
+        // Determine if async based on IsAsync flag OR if business logic contains async method calls
+        // This must be done BEFORE processing to ensure EnsureAsyncAwait is called
+        var needsAsync = queryInfo.IsAsync || CqrsGeneratorHelpers.HasAsyncMethodCalls(queryInfo.BusinessLogic ?? string.Empty);
+
+        // Process business logic first to detect dependencies and fix issues
+        var processedLogic = BusinessLogicProcessor.Process(queryInfo.BusinessLogic, needsAsync);
+
         var sb = new StringBuilder();
 
         // Add namespace
         sb.AppendLine($"namespace {queryInfo.Namespace};");
         sb.AppendLine();
 
-        // Add usings (using lightweight MediatR replacement)
+        // Add usings (production-ready optimized queries)
+        sb.AppendLine("using System.Collections.Generic;");
+        sb.AppendLine("using System.Linq;");
         sb.AppendLine("using Microsoft.EntityFrameworkCore;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
-        // Add Result and IApplicationDbContext usings
-        var rootNamespace = ExtractRootNamespace(queryInfo.Namespace);
+
+        // Add core usings
+        var rootNamespace = CqrsGeneratorHelpers.ExtractRootNamespace(queryInfo.Namespace);
         sb.AppendLine($"using {rootNamespace}.Application.Common;");
         sb.AppendLine($"using {rootNamespace}.Application.Common.Interfaces;");
+        sb.AppendLine($"using {rootNamespace}.Application.Common.Extensions;");
         sb.AppendLine($"using {rootNamespace}.Models;");
+
+        // Add production feature usings
+        if (IncludeLogger)
+        {
+            sb.AppendLine("using Microsoft.Extensions.Logging;");
+        }
+
+        if (IncludeMapper && UseProjectTo)
+        {
+            sb.AppendLine("using AutoMapper;");
+            sb.AppendLine("using AutoMapper.QueryableExtensions;");
+        }
 
         // Add Microsoft.AspNetCore.Mvc.Rendering if ViewBag mutations exist (for SelectListItem)
         if (queryInfo.ViewModelMutations?.Any() == true)
         {
             sb.AppendLine("using Microsoft.AspNetCore.Mvc.Rendering;");
+        }
+
+        // Add Microsoft.AspNetCore.Http if any property uses ASP.NET Core Http types
+        if (CqrsGeneratorHelpers.RequiresAspNetCoreHttpUsing(queryInfo))
+        {
+            sb.AppendLine("using Microsoft.AspNetCore.Http;");
+        }
+
+        // Add usings detected from business logic
+        foreach (var requiredUsing in processedLogic.RequiredUsings)
+        {
+            sb.AppendLine($"using {requiredUsing};");
         }
 
         sb.AppendLine();
@@ -53,124 +107,17 @@ public sealed class QueryGenerator : IQueryGenerator
         // Generate Response DTO if ViewBag mutations exist
         if (queryInfo.ViewModelMutations?.Any() == true)
         {
-            GenerateResponseDto(sb, queryInfo);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(queryInfo.Name);
+            CqrsGeneratorHelpers.GenerateResponseDto(sb, entityName, queryInfo.Name, queryInfo.ViewModelMutations);
             sb.AppendLine();
         }
 
         // Generate Handler in same file
-        GenerateHandlerClass(sb, queryInfo);
+        GenerateHandlerClass(sb, queryInfo, processedLogic);
 
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Generates a response DTO record from ViewBag mutations.
-    /// </summary>
-    private void GenerateResponseDto(StringBuilder sb, QueryInfo queryInfo)
-    {
-        var entityName = ExtractEntityName(queryInfo.Name);
-        var dtoName = $"{entityName}ResponseDto";
-
-        sb.AppendLine("/// <summary>");
-        sb.AppendLine($"/// Response DTO for {queryInfo.Name} containing ViewBag/ViewData properties.");
-        sb.AppendLine("/// </summary>");
-        sb.AppendLine($"public record {dtoName}");
-        sb.AppendLine("{");
-
-        if (queryInfo.ViewModelMutations != null)
-        {
-            foreach (var mutation in queryInfo.ViewModelMutations)
-            {
-                var propertyType = InferTypeFromAssignedValue(mutation.AssignedValue);
-                sb.AppendLine($"{Indent}/// <summary>");
-                sb.AppendLine($"{Indent}/// Gets or initializes {mutation.PropertyName}.");
-
-                if (propertyType == "object?")
-                {
-                    sb.AppendLine($"{Indent}/// TODO: Review type inference - assigned value: {EscapeXmlComment(mutation.AssignedValue)}");
-                }
-
-                sb.AppendLine($"{Indent}/// </summary>");
-                sb.AppendLine($"{Indent}public {propertyType} {mutation.PropertyName} {{ get; init; }}");
-                sb.AppendLine();
-            }
-        }
-
-        sb.AppendLine("}");
-    }
-
-    /// <summary>
-    /// Infers the C# type from an assigned value expression.
-    /// </summary>
-    private static string InferTypeFromAssignedValue(string assignedValue)
-    {
-        if (string.IsNullOrWhiteSpace(assignedValue))
-            return "object?";
-
-        var trimmed = assignedValue.Trim();
-
-        // SelectList patterns
-        if (trimmed.Contains("new SelectList", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Select(", StringComparison.OrdinalIgnoreCase) && trimmed.Contains("SelectListItem", StringComparison.OrdinalIgnoreCase))
-        {
-            return "IEnumerable<SelectListItem>";
-        }
-
-        // String literal
-        if (trimmed.StartsWith("\"") && trimmed.EndsWith("\""))
-        {
-            return "string";
-        }
-
-        // Numeric literals
-        if (int.TryParse(trimmed, out _))
-        {
-            return "int";
-        }
-
-        if (decimal.TryParse(trimmed, out _) || trimmed.EndsWith("m", StringComparison.OrdinalIgnoreCase))
-        {
-            return "decimal";
-        }
-
-        // Boolean
-        if (trimmed.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("false", StringComparison.OrdinalIgnoreCase))
-        {
-            return "bool";
-        }
-
-        // LINQ query (IEnumerable<T> or List<T>)
-        if (trimmed.Contains(".ToList()", StringComparison.OrdinalIgnoreCase))
-        {
-            return "List<object>"; // TODO: Could be improved with type inference
-        }
-
-        if (trimmed.Contains(".AsEnumerable()", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Where(", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Select(", StringComparison.OrdinalIgnoreCase))
-        {
-            return "IEnumerable<object>"; // TODO: Could be improved with type inference
-        }
-
-        // Default fallback with nullable
-        return "object?";
-    }
-
-    /// <summary>
-    /// Escapes XML comment content to prevent XML parsing issues.
-    /// </summary>
-    private static string EscapeXmlComment(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-            return string.Empty;
-
-        return text
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;");
-    }
 
     /// <summary>
     /// Generates only the Query record (for backwards compatibility).
@@ -200,8 +147,8 @@ public sealed class QueryGenerator : IQueryGenerator
         {
             // Single property - inline record
             var prop = queryInfo.Properties[0];
-            var propType = FormatPropertyType(prop);
-            var propName = ToPascalCase(prop.Name);
+            var propType = CqrsGeneratorHelpers.FormatPropertyType(prop);
+            var propName = CqrsGeneratorHelpers.ToPascalCase(prop.Name);
             sb.AppendLine($"public record {queryInfo.Name}({propType} {propName}) : IRequest<{queryInfo.ReturnType}>;");
         }
         else
@@ -217,8 +164,8 @@ public sealed class QueryGenerator : IQueryGenerator
             for (int i = 0; i < sortedProperties.Count; i++)
             {
                 var prop = sortedProperties[i];
-                var propType = FormatPropertyType(prop);
-                var propName = ToPascalCase(prop.Name);
+                var propType = CqrsGeneratorHelpers.FormatPropertyType(prop);
+                var propName = CqrsGeneratorHelpers.ToPascalCase(prop.Name);
                 var comma = i < sortedProperties.Count - 1 ? "," : string.Empty;
 
                 // Add default value for pagination parameters
@@ -247,7 +194,7 @@ public sealed class QueryGenerator : IQueryGenerator
     /// <summary>
     /// Generates the handler class content (without namespace/usings).
     /// </summary>
-    private void GenerateHandlerClass(StringBuilder sb, QueryInfo queryInfo)
+    private void GenerateHandlerClass(StringBuilder sb, QueryInfo queryInfo, ProcessedBusinessLogic? processedLogic)
     {
         // Add XML documentation
         sb.AppendLine("/// <summary>");
@@ -262,27 +209,116 @@ public sealed class QueryGenerator : IQueryGenerator
 
         // Generate handler class
         var handlerName = GetHandlerName(queryInfo.Name);
-        sb.AppendLine($"public sealed class {handlerName} : IRequestHandler<{queryInfo.Name}, {queryInfo.ReturnType}>");
+
+        // Add caching interface if supported
+        if (IncludeCachingSupport)
+        {
+            sb.AppendLine($"public sealed class {handlerName} : IRequestHandler<{queryInfo.Name}, {queryInfo.ReturnType}>");
+        }
+        else
+        {
+            sb.AppendLine($"public sealed class {handlerName} : IRequestHandler<{queryInfo.Name}, {queryInfo.ReturnType}>");
+        }
+
         sb.AppendLine("{");
 
-        // Add dependencies (context field)
+        // Add dependencies (fields)
         sb.AppendLine($"{Indent}private readonly IApplicationDbContext _context;");
+
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{Indent}private readonly ILogger<{handlerName}> _logger;");
+        }
+
+        if (IncludeMapper && UseProjectTo)
+        {
+            sb.AppendLine($"{Indent}private readonly IMapper _mapper;");
+        }
+
+        // Add detected dependencies from business logic
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                sb.AppendLine($"{Indent}private readonly {dep.InterfaceType} {dep.FieldName};");
+            }
+        }
+
         sb.AppendLine();
 
-        // Add constructor
-        sb.AppendLine($"{Indent}public {handlerName}(IApplicationDbContext context)");
+        // Add constructor with all dependencies
+        sb.Append($"{Indent}public {handlerName}(");
+        var constructorParams = new List<string> { "IApplicationDbContext context" };
+
+        if (IncludeLogger)
+        {
+            constructorParams.Add($"ILogger<{handlerName}> logger");
+        }
+
+        if (IncludeMapper && UseProjectTo)
+        {
+            constructorParams.Add("IMapper mapper");
+        }
+
+        // Add detected dependencies to constructor
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                constructorParams.Add($"{dep.InterfaceType} {dep.ConstructorParamName}");
+            }
+        }
+
+        if (constructorParams.Count <= 2)
+        {
+            sb.Append(string.Join(", ", constructorParams));
+            sb.AppendLine(")");
+        }
+        else
+        {
+            sb.AppendLine();
+            for (int i = 0; i < constructorParams.Count; i++)
+            {
+                var separator = i < constructorParams.Count - 1 ? "," : ")";
+                sb.AppendLine($"{DoubleIndent}{constructorParams[i]}{separator}");
+            }
+        }
+
         sb.AppendLine($"{Indent}{{");
         sb.AppendLine($"{DoubleIndent}_context = context;");
+
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{DoubleIndent}_logger = logger;");
+        }
+
+        if (IncludeMapper && UseProjectTo)
+        {
+            sb.AppendLine($"{DoubleIndent}_mapper = mapper;");
+        }
+
+        // Add detected dependency assignments
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                sb.AppendLine($"{DoubleIndent}{dep.FieldName} = {dep.ConstructorParamName};");
+            }
+        }
+
         sb.AppendLine($"{Indent}}}");
         sb.AppendLine();
 
-        // Determine if we need async - either from IsAsync flag or if business logic contains await
-        var needsAsync = queryInfo.IsAsync ||
+        // Determine if we need async - either from IsAsync flag, if business logic contains await, or contains *Async calls
+        // Also check processed logic since EnsureAsyncAwait may have added awaits
+        var handlerNeedsAsync = queryInfo.IsAsync ||
             (!string.IsNullOrWhiteSpace(queryInfo.BusinessLogic) &&
-             queryInfo.BusinessLogic.Contains("await ", StringComparison.Ordinal));
+             (queryInfo.BusinessLogic.Contains("await ", StringComparison.Ordinal) ||
+              CqrsGeneratorHelpers.HasAsyncMethodCalls(queryInfo.BusinessLogic))) ||
+            (processedLogic != null && processedLogic.Code.Contains("await ", StringComparison.Ordinal));
 
         // Add Handle method
-        if (needsAsync)
+        if (handlerNeedsAsync)
         {
             sb.AppendLine($"{Indent}public async Task<{queryInfo.ReturnType}> Handle({queryInfo.Name} request, CancellationToken cancellationToken)");
         }
@@ -294,22 +330,22 @@ public sealed class QueryGenerator : IQueryGenerator
         sb.AppendLine($"{Indent}{{");
 
         // Add implementation
-        if (!string.IsNullOrWhiteSpace(queryInfo.BusinessLogic))
+        if (processedLogic != null && !string.IsNullOrWhiteSpace(processedLogic.Code))
         {
-            // Use provided business logic
+            // Use processed business logic
             sb.AppendLine($"{DoubleIndent}// Business logic from {queryInfo.Source.ControllerName}.{queryInfo.Source.ActionName}");
 
             // If ViewBag mutations exist, declare result variable
             if (queryInfo.ViewModelMutations?.Any() == true)
             {
-                var entityName = ExtractEntityName(queryInfo.Name);
+                var entityName = CqrsGeneratorHelpers.ExtractEntityName(queryInfo.Name);
                 var dtoName = $"{entityName}ResponseDto";
                 sb.AppendLine($"{DoubleIndent}var result = new {dtoName}();");
                 sb.AppendLine();
             }
 
-            // Indent the business logic
-            var logicLines = queryInfo.BusinessLogic.Split('\n', StringSplitOptions.TrimEntries);
+            // Indent the processed business logic
+            var logicLines = processedLogic.Code.Split('\n', StringSplitOptions.TrimEntries);
             foreach (var line in logicLines)
             {
                 if (!string.IsNullOrWhiteSpace(line))
@@ -318,7 +354,7 @@ public sealed class QueryGenerator : IQueryGenerator
                 }
             }
         }
-        else
+        else if (string.IsNullOrWhiteSpace(queryInfo.BusinessLogic))
         {
             // Generate placeholder implementation
             if (queryInfo.Confidence < 60)
@@ -335,7 +371,7 @@ public sealed class QueryGenerator : IQueryGenerator
                 sb.AppendLine();
 
                 // Extract entity name from query (e.g., "GetStudent" -> "Student")
-                var entityName = ExtractEntityName(queryInfo.Name);
+                var entityName = CqrsGeneratorHelpers.ExtractEntityName(queryInfo.Name);
 
                 if (queryInfo.Name.StartsWith("Get", StringComparison.OrdinalIgnoreCase))
                 {
@@ -372,7 +408,59 @@ public sealed class QueryGenerator : IQueryGenerator
         }
 
         sb.AppendLine($"{Indent}}}");
+
+        // Generate private methods that are called from business logic
+        if (queryInfo.PrivateMethods?.Any() == true)
+        {
+            foreach (var privateMethod in queryInfo.PrivateMethods)
+            {
+                sb.AppendLine();
+                GeneratePrivateMethod(sb, privateMethod);
+            }
+        }
+
         sb.AppendLine("}");
+    }
+
+    /// <summary>
+    /// Generates a private method for the handler from a controller's private method.
+    /// Transforms controller-specific patterns to handler patterns.
+    /// </summary>
+    private void GeneratePrivateMethod(StringBuilder sb, NetLift.Core.Models.Modernization.PrivateMethodInfo privateMethod)
+    {
+        // Extract the method body and transform it
+        var methodBody = privateMethod.Body;
+
+        // Transform controller-specific patterns
+        methodBody = TransformPrivateMethodBody(methodBody);
+
+        // Add the method to the handler
+        sb.AppendLine($"{Indent}/// <summary>");
+        sb.AppendLine($"{Indent}/// Private helper method migrated from controller.");
+        sb.AppendLine($"{Indent}/// TODO: Review and adapt as needed for handler context.");
+        sb.AppendLine($"{Indent}/// </summary>");
+        sb.AppendLine($"{Indent}{methodBody}");
+    }
+
+    /// <summary>
+    /// Transforms controller-specific patterns in a private method body to handler patterns.
+    /// Uses Roslyn for accurate parsing and transformation.
+    /// </summary>
+    private static string TransformPrivateMethodBody(string methodBody)
+    {
+        try
+        {
+            var tree = CSharpSyntaxTree.ParseText(methodBody);
+            var root = tree.GetRoot();
+            var rewriter = new PrivateMethodTransformRewriter();
+            var newRoot = rewriter.Visit(root);
+            return newRoot.ToFullString();
+        }
+        catch
+        {
+            // Fallback to original if parsing fails
+            return methodBody;
+        }
     }
 
     private static string GenerateDescription(QueryInfo queryInfo)
@@ -380,7 +468,7 @@ public sealed class QueryGenerator : IQueryGenerator
         // Try to infer description from query name
         if (queryInfo.Name.StartsWith("Get", StringComparison.OrdinalIgnoreCase))
         {
-            var entityName = ExtractEntityName(queryInfo.Name);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(queryInfo.Name);
 
             if (queryInfo.Name.Contains("ById", StringComparison.OrdinalIgnoreCase))
             {
@@ -397,7 +485,7 @@ public sealed class QueryGenerator : IQueryGenerator
         }
         else if (queryInfo.Name.StartsWith("List", StringComparison.OrdinalIgnoreCase))
         {
-            var entityName = ExtractEntityName(queryInfo.Name);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(queryInfo.Name);
             return $"Query to list {entityName}s.";
         }
 
@@ -415,75 +503,6 @@ public sealed class QueryGenerator : IQueryGenerator
         return $"{queryName}Handler";
     }
 
-    private static string ExtractEntityName(string queryName)
-    {
-        // Remove common prefixes and "Query" suffix
-        var entityName = queryName;
-
-        var prefixes = new[] { "Get", "List", "Find", "Search", "Fetch", "Load", "Retrieve" };
-        foreach (var prefix in prefixes)
-        {
-            if (entityName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                entityName = entityName[prefix.Length..];
-                break;
-            }
-        }
-
-        if (entityName.EndsWith("Query", StringComparison.OrdinalIgnoreCase))
-        {
-            entityName = entityName[..^5];
-        }
-
-        // Remove "ById" suffix
-        if (entityName.EndsWith("ById", StringComparison.OrdinalIgnoreCase))
-        {
-            entityName = entityName[..^4];
-        }
-
-        // Remove pluralization for single entity queries
-        if (entityName.EndsWith("s", StringComparison.OrdinalIgnoreCase) &&
-            !entityName.EndsWith("ss", StringComparison.OrdinalIgnoreCase))
-        {
-            // Keep plural for list queries
-        }
-
-        return string.IsNullOrWhiteSpace(entityName) ? "Entity" : entityName;
-    }
-
-    private static string FormatPropertyType(CommandProperty property)
-    {
-        var type = property.Type;
-
-        // Transform legacy MVC types to modern equivalents
-        type = TransformLegacyType(type);
-
-        if (property.IsNullable && !type.EndsWith("?"))
-        {
-            type += "?";
-        }
-
-        return type;
-    }
-
-    /// <summary>
-    /// Transforms legacy ASP.NET MVC types to ASP.NET Core equivalents.
-    /// </summary>
-    private static string TransformLegacyType(string type)
-    {
-        return type switch
-        {
-            "FormCollection" => "Dictionary<string, string>",
-            "System.Web.Mvc.FormCollection" => "Dictionary<string, string>",
-            "HttpPostedFileBase" => "IFormFile",
-            "System.Web.HttpPostedFileBase" => "IFormFile",
-            "HttpPostedFileBase[]" => "IFormFileCollection",
-            "IEnumerable<HttpPostedFileBase>" => "IFormFileCollection",
-            "SelectList" => "IEnumerable<SelectListItem>",
-            "System.Web.Mvc.SelectList" => "IEnumerable<SelectListItem>",
-            _ => type
-        };
-    }
 
     private static string GetDefaultValue(CommandProperty property, QueryInfo queryInfo)
     {
@@ -503,18 +522,11 @@ public sealed class QueryGenerator : IQueryGenerator
         return string.Empty;
     }
 
-    /// <summary>
-    /// Converts a string to PascalCase (first letter uppercase).
-    /// </summary>
-    private static string ToPascalCase(string name)
-    {
-        if (string.IsNullOrEmpty(name))
-            return name;
-        return char.ToUpperInvariant(name[0]) + name.Substring(1);
-    }
 
-    private static void GenerateGetByIdImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
+    private void GenerateGetByIdImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
     {
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
         // Find the ID property
         var idProperty = queryInfo.Properties.FirstOrDefault(p =>
             p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
@@ -522,64 +534,157 @@ public sealed class QueryGenerator : IQueryGenerator
 
         if (idProperty != null)
         {
-            sb.AppendLine($"{DoubleIndent}var query = _context.{entityName}s.AsQueryable();");
-            sb.AppendLine();
-
-            if (queryInfo.IsAsync)
+            // Add logging at start
+            if (IncludeLogger)
             {
-                sb.AppendLine($"{DoubleIndent}var entity = await query");
-                sb.AppendLine($"{TripleIndent}.FirstOrDefaultAsync(e => e.Id == request.{idProperty.Name}, cancellationToken);");
-            }
-            else
-            {
-                sb.AppendLine($"{DoubleIndent}var entity = query");
-                sb.AppendLine($"{TripleIndent}.FirstOrDefault(e => e.Id == request.{idProperty.Name});");
+                sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Getting {entityName} by Id {{Id}}\", request.{idProperty.Name});");
+                sb.AppendLine();
             }
 
-            sb.AppendLine();
-            sb.AppendLine($"{DoubleIndent}if (entity == null)");
-            sb.AppendLine($"{DoubleIndent}{{");
-
-            if (queryInfo.ReturnType.Contains("Result"))
+            // Use optimized query with AsNoTracking and ProjectTo
+            if (UseProjectTo && IncludeMapper && queryInfo.ReturnType.Contains("Dto"))
             {
-                sb.AppendLine($"{TripleIndent}return Result<{entityName}Dto>.Failure(\"{entityName} not found\");");
-            }
-            else
-            {
-                sb.AppendLine($"{TripleIndent}throw new KeyNotFoundException(\"{entityName} not found\");");
-            }
-
-            sb.AppendLine($"{DoubleIndent}}}");
-            sb.AppendLine();
-
-            // Map to DTO
-            if (queryInfo.ReturnType.Contains("Dto"))
-            {
-                sb.AppendLine($"{DoubleIndent}var dto = new {entityName}Dto");
+                sb.AppendLine($"{DoubleIndent}var dto = await _context.{entityName}s");
+                if (UseAsNoTracking)
+                {
+                    sb.AppendLine($"{TripleIndent}.AsNoTracking()");
+                }
+                sb.AppendLine($"{TripleIndent}.Where(e => e.Id == request.{idProperty.Name})");
+                sb.AppendLine($"{TripleIndent}.ProjectTo<{entityName}Dto>(_mapper.ConfigurationProvider)");
+                sb.AppendLine($"{TripleIndent}.FirstOrDefaultAsync(cancellationToken){configureAwait};");
+                sb.AppendLine();
+                sb.AppendLine($"{DoubleIndent}if (dto is null)");
                 sb.AppendLine($"{DoubleIndent}{{");
-                sb.AppendLine($"{TripleIndent}// TODO: Map entity properties to DTO");
-                sb.AppendLine($"{TripleIndent}// Id = entity.Id,");
-                sb.AppendLine($"{DoubleIndent}}};");
+
+                if (IncludeLogger)
+                {
+                    sb.AppendLine($"{TripleIndent}_logger.LogWarning(\"{entityName} with Id {{Id}} not found\", request.{idProperty.Name});");
+                }
+
+                if (queryInfo.ReturnType.Contains("Result"))
+                {
+                    sb.AppendLine($"{TripleIndent}return Result<{entityName}Dto>.Failure(Error.NotFound);");
+                }
+                else
+                {
+                    sb.AppendLine($"{TripleIndent}throw new KeyNotFoundException(\"{entityName} not found\");");
+                }
+
+                sb.AppendLine($"{DoubleIndent}}}");
+                sb.AppendLine();
+
+                if (queryInfo.ReturnType.Contains("Result"))
+                {
+                    sb.AppendLine($"{DoubleIndent}return Result<{entityName}Dto>.Success(dto);");
+                }
+                else
+                {
+                    sb.AppendLine($"{DoubleIndent}return dto;");
+                }
+            }
+            else
+            {
+                // Fallback to standard query
+                sb.Append($"{DoubleIndent}var query = _context.{entityName}s");
+                if (UseAsNoTracking)
+                {
+                    sb.AppendLine();
+                    sb.AppendLine($"{TripleIndent}.AsNoTracking()");
+                    sb.Append($"{TripleIndent}");
+                }
+                sb.AppendLine(".AsQueryable();");
                 sb.AppendLine();
 
                 if (queryInfo.IsAsync)
                 {
-                    sb.AppendLine($"{DoubleIndent}return dto;");
+                    sb.AppendLine($"{DoubleIndent}var entity = await query");
+                    sb.AppendLine($"{TripleIndent}.FirstOrDefaultAsync(e => e.Id == request.{idProperty.Name}, cancellationToken){configureAwait};");
                 }
                 else
                 {
-                    sb.AppendLine($"{DoubleIndent}return Task.FromResult(dto);");
+                    sb.AppendLine($"{DoubleIndent}var entity = query");
+                    sb.AppendLine($"{TripleIndent}.FirstOrDefault(e => e.Id == request.{idProperty.Name});");
                 }
-            }
-            else
-            {
-                if (queryInfo.IsAsync)
+
+                sb.AppendLine();
+                sb.AppendLine($"{DoubleIndent}if (entity is null)");
+                sb.AppendLine($"{DoubleIndent}{{");
+
+                if (IncludeLogger)
                 {
-                    sb.AppendLine($"{DoubleIndent}return entity;");
+                    sb.AppendLine($"{TripleIndent}_logger.LogWarning(\"{entityName} with Id {{Id}} not found\", request.{idProperty.Name});");
+                }
+
+                if (queryInfo.ReturnType.Contains("Result"))
+                {
+                    if (queryInfo.IsAsync)
+                    {
+                        sb.AppendLine($"{TripleIndent}return Result<{entityName}Dto>.Failure(Error.NotFound);");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{TripleIndent}return Task.FromResult(Result<{entityName}Dto>.Failure(Error.NotFound));");
+                    }
                 }
                 else
                 {
-                    sb.AppendLine($"{DoubleIndent}return Task.FromResult(entity);");
+                    sb.AppendLine($"{TripleIndent}throw new KeyNotFoundException(\"{entityName} not found\");");
+                }
+
+                sb.AppendLine($"{DoubleIndent}}}");
+                sb.AppendLine();
+
+                // Map to DTO using mapper if available
+                if (queryInfo.ReturnType.Contains("Dto"))
+                {
+                    if (IncludeMapper)
+                    {
+                        sb.AppendLine($"{DoubleIndent}var dto = _mapper.Map<{entityName}Dto>(entity);");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{DoubleIndent}var dto = new {entityName}Dto");
+                        sb.AppendLine($"{DoubleIndent}{{");
+                        sb.AppendLine($"{TripleIndent}// TODO: Map entity properties to DTO");
+                        sb.AppendLine($"{TripleIndent}// Id = entity.Id,");
+                        sb.AppendLine($"{DoubleIndent}}};");
+                    }
+
+                    sb.AppendLine();
+
+                    if (queryInfo.ReturnType.Contains("Result"))
+                    {
+                        if (queryInfo.IsAsync)
+                        {
+                            sb.AppendLine($"{DoubleIndent}return Result<{entityName}Dto>.Success(dto);");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"{DoubleIndent}return Task.FromResult(Result<{entityName}Dto>.Success(dto));");
+                        }
+                    }
+                    else
+                    {
+                        if (queryInfo.IsAsync)
+                        {
+                            sb.AppendLine($"{DoubleIndent}return dto;");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"{DoubleIndent}return Task.FromResult(dto);");
+                        }
+                    }
+                }
+                else
+                {
+                    if (queryInfo.IsAsync)
+                    {
+                        sb.AppendLine($"{DoubleIndent}return entity;");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{DoubleIndent}return Task.FromResult(entity);");
+                    }
                 }
             }
         }
@@ -589,9 +694,26 @@ public sealed class QueryGenerator : IQueryGenerator
         }
     }
 
-    private static void GenerateGetListImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
+    private void GenerateGetListImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
     {
-        sb.AppendLine($"{DoubleIndent}var query = _context.{entityName}s.AsQueryable();");
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
+        // Add logging at start
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Getting {entityName} list\");");
+            sb.AppendLine();
+        }
+
+        // Start with optimized query
+        sb.Append($"{DoubleIndent}var query = _context.{entityName}s");
+        if (UseAsNoTracking)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"{TripleIndent}.AsNoTracking()");
+            sb.Append($"{TripleIndent}");
+        }
+        sb.AppendLine(".AsQueryable();");
         sb.AppendLine();
 
         // Add filtering logic if supported
@@ -600,37 +722,63 @@ public sealed class QueryGenerator : IQueryGenerator
             GenerateFilteringLogic(sb, queryInfo);
         }
 
-        // Map to DTO if needed
+        // Map to DTO with optimized projection
         if (queryInfo.ReturnType.Contains("Dto"))
         {
-            if (queryInfo.IsAsync)
+            if (UseProjectTo && IncludeMapper)
             {
-                sb.AppendLine($"{DoubleIndent}return await query");
-                sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
-                sb.AppendLine($"{TripleIndent}{{");
-                sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
-                sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
-                sb.AppendLine($"{TripleIndent}}})");
-                sb.AppendLine($"{TripleIndent}.ToListAsync(cancellationToken);");
+                // Use ProjectTo for efficient SQL projection
+                if (queryInfo.IsAsync)
+                {
+                    sb.AppendLine($"{DoubleIndent}var items = await query");
+                    sb.AppendLine($"{TripleIndent}.ProjectTo<{entityName}Dto>(_mapper.ConfigurationProvider)");
+                    sb.AppendLine($"{TripleIndent}.ToListAsync(cancellationToken){configureAwait};");
+                    sb.AppendLine();
+                    sb.AppendLine($"{DoubleIndent}return Result<IReadOnlyList<{entityName}Dto>>.Success(items);");
+                }
+                else
+                {
+                    sb.AppendLine($"{DoubleIndent}var items = query");
+                    sb.AppendLine($"{TripleIndent}.ProjectTo<{entityName}Dto>(_mapper.ConfigurationProvider)");
+                    sb.AppendLine($"{TripleIndent}.ToList();");
+                    sb.AppendLine();
+                    sb.AppendLine($"{DoubleIndent}return Task.FromResult(Result<IReadOnlyList<{entityName}Dto>>.Success(items));");
+                }
             }
             else
             {
-                sb.AppendLine($"{DoubleIndent}var result = query");
-                sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
-                sb.AppendLine($"{TripleIndent}{{");
-                sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
-                sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
-                sb.AppendLine($"{TripleIndent}}})");
-                sb.AppendLine($"{TripleIndent}.ToList();");
-                sb.AppendLine();
-                sb.AppendLine($"{DoubleIndent}return Task.FromResult(result);");
+                // Fallback to manual projection
+                if (queryInfo.IsAsync)
+                {
+                    sb.AppendLine($"{DoubleIndent}var items = await query");
+                    sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
+                    sb.AppendLine($"{TripleIndent}{{");
+                    sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
+                    sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
+                    sb.AppendLine($"{TripleIndent}}})");
+                    sb.AppendLine($"{TripleIndent}.ToListAsync(cancellationToken){configureAwait};");
+                    sb.AppendLine();
+                    sb.AppendLine($"{DoubleIndent}return Result<IReadOnlyList<{entityName}Dto>>.Success(items);");
+                }
+                else
+                {
+                    sb.AppendLine($"{DoubleIndent}var items = query");
+                    sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
+                    sb.AppendLine($"{TripleIndent}{{");
+                    sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
+                    sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
+                    sb.AppendLine($"{TripleIndent}}})");
+                    sb.AppendLine($"{TripleIndent}.ToList();");
+                    sb.AppendLine();
+                    sb.AppendLine($"{DoubleIndent}return Task.FromResult(Result<IReadOnlyList<{entityName}Dto>>.Success(items));");
+                }
             }
         }
         else
         {
             if (queryInfo.IsAsync)
             {
-                sb.AppendLine($"{DoubleIndent}return await query.ToListAsync(cancellationToken);");
+                sb.AppendLine($"{DoubleIndent}return await query.ToListAsync(cancellationToken){configureAwait};");
             }
             else
             {
@@ -639,9 +787,26 @@ public sealed class QueryGenerator : IQueryGenerator
         }
     }
 
-    private static void GenerateGetListWithPaginationImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
+    private void GenerateGetListWithPaginationImplementation(StringBuilder sb, QueryInfo queryInfo, string entityName)
     {
-        sb.AppendLine($"{DoubleIndent}var query = _context.{entityName}s.AsQueryable();");
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
+        // Add logging at start
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Getting paginated {entityName} list\");");
+            sb.AppendLine();
+        }
+
+        // Start with optimized query
+        sb.Append($"{DoubleIndent}var query = _context.{entityName}s");
+        if (UseAsNoTracking)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"{TripleIndent}.AsNoTracking()");
+            sb.Append($"{TripleIndent}");
+        }
+        sb.AppendLine(".AsQueryable();");
         sb.AppendLine();
 
         // Add filtering logic if supported
@@ -676,37 +841,63 @@ public sealed class QueryGenerator : IQueryGenerator
 
         if (pageNumberProperty != null && pageSizeProperty != null)
         {
-            // Map to DTO if needed
+            // Map to DTO with optimized projection
             if (queryInfo.ReturnType.Contains("Dto"))
             {
-                if (queryInfo.IsAsync)
+                if (UseProjectTo && IncludeMapper)
                 {
-                    sb.AppendLine($"{DoubleIndent}return await query");
-                    sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
-                    sb.AppendLine($"{TripleIndent}{{");
-                    sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
-                    sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
-                    sb.AppendLine($"{TripleIndent}}})");
-                    sb.AppendLine($"{TripleIndent}.ToPagedListAsync(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name}, cancellationToken);");
+                    // Use ProjectTo for efficient SQL projection with pagination
+                    if (queryInfo.IsAsync)
+                    {
+                        sb.AppendLine($"{DoubleIndent}var pagedList = await query");
+                        sb.AppendLine($"{TripleIndent}.ProjectTo<{entityName}Dto>(_mapper.ConfigurationProvider)");
+                        sb.AppendLine($"{TripleIndent}.ToPagedListAsync(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name}, cancellationToken){configureAwait};");
+                        sb.AppendLine();
+                        sb.AppendLine($"{DoubleIndent}return Result<PagedList<{entityName}Dto>>.Success(pagedList);");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{DoubleIndent}var pagedList = query");
+                        sb.AppendLine($"{TripleIndent}.ProjectTo<{entityName}Dto>(_mapper.ConfigurationProvider)");
+                        sb.AppendLine($"{TripleIndent}.ToPagedList(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name});");
+                        sb.AppendLine();
+                        sb.AppendLine($"{DoubleIndent}return Task.FromResult(Result<PagedList<{entityName}Dto>>.Success(pagedList));");
+                    }
                 }
                 else
                 {
-                    sb.AppendLine($"{DoubleIndent}var items = query");
-                    sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
-                    sb.AppendLine($"{TripleIndent}{{");
-                    sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
-                    sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
-                    sb.AppendLine($"{TripleIndent}}})");
-                    sb.AppendLine($"{TripleIndent}.ToPagedList(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name});");
-                    sb.AppendLine();
-                    sb.AppendLine($"{DoubleIndent}return Task.FromResult(items);");
+                    // Fallback to manual projection
+                    if (queryInfo.IsAsync)
+                    {
+                        sb.AppendLine($"{DoubleIndent}var pagedList = await query");
+                        sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
+                        sb.AppendLine($"{TripleIndent}{{");
+                        sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
+                        sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
+                        sb.AppendLine($"{TripleIndent}}})");
+                        sb.AppendLine($"{TripleIndent}.ToPagedListAsync(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name}, cancellationToken){configureAwait};");
+                        sb.AppendLine();
+                        sb.AppendLine($"{DoubleIndent}return Result<PagedList<{entityName}Dto>>.Success(pagedList);");
+                    }
+                    else
+                    {
+                        sb.AppendLine($"{DoubleIndent}var pagedList = query");
+                        sb.AppendLine($"{TripleIndent}.Select(e => new {entityName}Dto");
+                        sb.AppendLine($"{TripleIndent}{{");
+                        sb.AppendLine($"{TripleIndent}{Indent}// TODO: Map entity properties to DTO");
+                        sb.AppendLine($"{TripleIndent}{Indent}// Id = e.Id,");
+                        sb.AppendLine($"{TripleIndent}}})");
+                        sb.AppendLine($"{TripleIndent}.ToPagedList(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name});");
+                        sb.AppendLine();
+                        sb.AppendLine($"{DoubleIndent}return Task.FromResult(Result<PagedList<{entityName}Dto>>.Success(pagedList));");
+                    }
                 }
             }
             else
             {
                 if (queryInfo.IsAsync)
                 {
-                    sb.AppendLine($"{DoubleIndent}return await query.ToPagedListAsync(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name}, cancellationToken);");
+                    sb.AppendLine($"{DoubleIndent}return await query.ToPagedListAsync(request.{pageNumberProperty.Name}, request.{pageSizeProperty.Name}, cancellationToken){configureAwait};");
                 }
                 else
                 {
@@ -766,25 +957,4 @@ public sealed class QueryGenerator : IQueryGenerator
         }
     }
 
-    /// <summary>
-    /// Extracts the root namespace from a full namespace (e.g., "MyApp.Application.Store.Queries" -> "MyApp")
-    /// </summary>
-    private static string ExtractRootNamespace(string fullNamespace)
-    {
-        if (string.IsNullOrWhiteSpace(fullNamespace))
-            return "Application";
-
-        var parts = fullNamespace.Split('.');
-        // Find where "Application" starts and return everything before it
-        for (int i = 0; i < parts.Length; i++)
-        {
-            if (parts[i].Equals("Application", StringComparison.OrdinalIgnoreCase))
-            {
-                return i > 0 ? string.Join(".", parts.Take(i)) : parts[0];
-            }
-        }
-
-        // If no Application found, return first part
-        return parts[0];
-    }
 }

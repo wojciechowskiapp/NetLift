@@ -1343,77 +1343,117 @@ public sealed class BusinessLogicBuilder
     }
 
     /// <summary>
-    /// Inlines private method calls into the generated business logic.
-    /// Single-use methods are fully inlined; multi-use methods get TODO comments.
+    /// Handles private method calls in the generated business logic.
+    /// Private methods are NOT inlined - they are kept as method calls and the methods
+    /// will be added to the handler class separately. This avoids issues with controller-specific
+    /// patterns and makes the generated code cleaner.
     /// </summary>
     private string InlinePrivateMethodCalls(string code, IReadOnlyList<PrivateMethodInfo> privateMethods)
     {
-        var result = code;
+        // Don't inline private methods - they will be added to the handler as private methods
+        // Just return the code as-is with the method calls intact
+        return code;
+    }
 
-        foreach (var privateMethod in privateMethods)
+    /// <summary>
+    /// Determines if a method call at the given position is in an expression context
+    /// (where it must evaluate to a value, not a statement).
+    /// </summary>
+    private static bool IsInExpressionContext(string code, int position)
+    {
+        if (position <= 0 || position >= code.Length)
         {
-            // Find all calls to this private method
-            var pattern = $@"\b{System.Text.RegularExpressions.Regex.Escape(privateMethod.Name)}\s*\(";
-            var matches = System.Text.RegularExpressions.Regex.Matches(result, pattern);
-
-            if (matches.Count == 0)
-            {
-                continue;
-            }
-
-            // Process each call (in reverse to maintain string indices)
-            for (int i = matches.Count - 1; i >= 0; i--)
-            {
-                var match = matches[i];
-                var startIndex = match.Index;
-                var openParenIndex = match.Index + match.Length - 1;
-
-                // Extract arguments using the helper
-                var arguments = ExtractParenthesesContent(result, openParenIndex + 1);
-                var endIndex = openParenIndex + 1 + arguments.Length + 1; // +1 for closing paren
-
-                // Extract method body without signature
-                var methodBody = ExtractMethodBodyWithoutSignature(privateMethod.Body);
-
-                // Substitute parameters with actual arguments
-                var inlinedBody = SubstituteParameters(methodBody, arguments, privateMethod.Parameters);
-
-                // Determine the context - check what comes before the method call
-                var lineStart = result.LastIndexOf('\n', startIndex) + 1;
-                var beforeCall = result.Substring(lineStart, startIndex - lineStart);
-                var isAssignment = beforeCall.Contains('=') && !beforeCall.Contains("==") && !beforeCall.Contains("!=");
-
-                // Build the replacement
-                var replacement = new StringBuilder();
-
-                // Add TODO comment if method is used by multiple actions
-                if (privateMethod.CallingActions.Count > 1)
-                {
-                    var otherActions = string.Join(", ", privateMethod.CallingActions.Where(a => a != privateMethod.CallingActions[0]));
-                    replacement.AppendLine($"// TODO: Private method {privateMethod.Name}() is also used by: {otherActions}");
-                    replacement.AppendLine("// Consider extracting to a shared helper class or domain service");
-                    replacement.Append(new string(' ', beforeCall.Length)); // Maintain indentation
-                }
-
-                // Wrap in parentheses for complex expressions, but not for simple ones
-                var needsParens = inlinedBody.Contains('\n') || inlinedBody.Contains("switch") || inlinedBody.Contains("?");
-                if (needsParens)
-                {
-                    replacement.Append("(");
-                    replacement.Append(inlinedBody.Trim());
-                    replacement.Append(")");
-                }
-                else
-                {
-                    replacement.Append(inlinedBody.Trim());
-                }
-
-                // Replace the method call with inlined body
-                result = result.Substring(0, startIndex) + replacement.ToString() + result.Substring(endIndex);
-            }
+            return false;
         }
 
-        return result;
+        // Find the start of the current line
+        var lineStart = code.LastIndexOf('\n', position - 1) + 1;
+        var beforeCallOnLine = code.Substring(lineStart, position - lineStart).Trim();
+
+        // Check if the method call is:
+        // 1. Inside a method argument: someMethod(theCall)
+        // 2. On the right side of an assignment: var x = theCall
+        // 3. Inside another expression: return theCall, theCall + something
+
+        // If the line starts with "var x = " or "type x = ", it's an assignment RHS
+        if (System.Text.RegularExpressions.Regex.IsMatch(beforeCallOnLine, @"(var|const|\w+)\s+\w+\s*=\s*$"))
+        {
+            return true;
+        }
+
+        // If there's an unclosed parenthesis, we're inside a method argument
+        var openParens = beforeCallOnLine.Count(c => c == '(');
+        var closeParens = beforeCallOnLine.Count(c => c == ')');
+        if (openParens > closeParens)
+        {
+            return true;
+        }
+
+        // If line contains "return " before the call
+        if (beforeCallOnLine.Contains("return ", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // If line ends with operators
+        if (beforeCallOnLine.EndsWith("+") || beforeCallOnLine.EndsWith("-") ||
+            beforeCallOnLine.EndsWith("*") || beforeCallOnLine.EndsWith("/") ||
+            beforeCallOnLine.EndsWith("&&") || beforeCallOnLine.EndsWith("||") ||
+            beforeCallOnLine.EndsWith(",") || beforeCallOnLine.EndsWith("("))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Determines if the code body is a statement block (cannot be used as expression)
+    /// vs a pure expression (can be used as a value).
+    /// </summary>
+    private static bool IsStatementBlock(string body)
+    {
+        var trimmed = body.Trim();
+
+        // Check for common statement indicators
+        // Variable declarations
+        if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"\b(var|const|int|string|bool|double|float|decimal|long|short|byte|object|dynamic)\s+\w+\s*="))
+        {
+            return true;
+        }
+
+        // Multiple statements (semicolons not at the end)
+        var semicolonCount = trimmed.Count(c => c == ';');
+        if (semicolonCount > 1)
+        {
+            return true;
+        }
+
+        // Statement keywords at start of lines
+        if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"(^|\n)\s*(if|for|foreach|while|do|switch|try|using|lock|return|throw|break|continue)\s*[\(\{]?"))
+        {
+            return true;
+        }
+
+        // Contains return statement (not just the value)
+        if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"\breturn\s+"))
+        {
+            return true;
+        }
+
+        // Assignment statements (not just expressions)
+        if (System.Text.RegularExpressions.Regex.IsMatch(trimmed, @"^\s*\w+(\.\w+)*\s*=\s*[^=]") && !trimmed.Contains("=>"))
+        {
+            return true;
+        }
+
+        // Method calls that stand alone as statements (end with ;)
+        if (trimmed.EndsWith(";") && !trimmed.Contains("=>"))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     /// <summary>

@@ -80,6 +80,26 @@ public record MigrationOptions
     /// Gets the target build tool for bundle migration.
     /// </summary>
     public BundleTarget BundleTarget { get; init; } = BundleTarget.Vite;
+
+    /// <summary>
+    /// Gets whether to transform Razor views (HTML helpers → Tag Helpers).
+    /// </summary>
+    public bool TransformRazorViews { get; init; } = true;
+
+    /// <summary>
+    /// Gets whether to migrate static files (Content/Scripts → wwwroot).
+    /// </summary>
+    public bool TransformStaticFiles { get; init; } = true;
+
+    /// <summary>
+    /// Gets whether to transform SignalR hubs (legacy → ASP.NET Core SignalR).
+    /// </summary>
+    public bool TransformSignalR { get; init; } = true;
+
+    /// <summary>
+    /// Gets whether to transform DI container registrations (Autofac/Unity/Ninject → MS.DI).
+    /// </summary>
+    public bool TransformDependencyInjection { get; init; } = true;
 }
 
 /// <summary>

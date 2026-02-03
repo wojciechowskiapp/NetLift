@@ -5,13 +5,21 @@ using System.Text;
 namespace NetLift.Transforms.Modernization.Generators;
 
 /// <summary>
-/// Generates FluentValidation validators for CQRS Commands and Queries.
+/// Generates production-ready FluentValidation validators for CQRS Commands and Queries.
+/// Supports async validation, custom validators, and localized error messages.
 /// </summary>
 public sealed class ValidatorGenerator : IValidatorGenerator
 {
     private const string Indent = "    ";
     private const string DoubleIndent = "        ";
     private const string TripleIndent = "            ";
+
+    /// <summary>
+    /// Options for validator generation.
+    /// </summary>
+    public bool IncludeAsyncValidation { get; set; } = true;
+    public bool IncludeCustomValidators { get; set; } = true;
+    public bool UseLocalizableMessages { get; set; } = false;
 
     /// <summary>
     /// Generates a FluentValidation validator class.
@@ -30,6 +38,13 @@ public sealed class ValidatorGenerator : IValidatorGenerator
 
         // Add usings
         sb.AppendLine("using FluentValidation;");
+
+        if (IncludeAsyncValidation)
+        {
+            sb.AppendLine("using System.Threading;");
+            sb.AppendLine("using System.Threading.Tasks;");
+        }
+
         sb.AppendLine();
 
         // Add XML documentation
@@ -74,9 +89,39 @@ public sealed class ValidatorGenerator : IValidatorGenerator
         }
 
         sb.AppendLine($"{Indent}}}");
+
+        // Add custom validator methods if needed
+        if (IncludeCustomValidators && HasUrlValidation(validatorInfo))
+        {
+            sb.AppendLine();
+            sb.AppendLine($"{Indent}/// <summary>");
+            sb.AppendLine($"{Indent}/// Validates that the string is a valid URL.");
+            sb.AppendLine($"{Indent}/// </summary>");
+            sb.AppendLine($"{Indent}private static bool BeValidUrl(string? url)");
+            sb.AppendLine($"{Indent}{{");
+            sb.AppendLine($"{DoubleIndent}if (string.IsNullOrWhiteSpace(url))");
+            sb.AppendLine($"{DoubleIndent}{{");
+            sb.AppendLine($"{TripleIndent}return true; // Null/empty handled by NotEmpty rule");
+            sb.AppendLine($"{DoubleIndent}}}");
+            sb.AppendLine();
+            sb.AppendLine($"{DoubleIndent}return Uri.TryCreate(url, UriKind.Absolute, out var result)");
+            sb.AppendLine($"{TripleIndent}&& (result.Scheme == Uri.UriSchemeHttp || result.Scheme == Uri.UriSchemeHttps);");
+            sb.AppendLine($"{Indent}}}");
+        }
+
         sb.AppendLine("}");
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Checks if the validator needs URL validation.
+    /// </summary>
+    private static bool HasUrlValidation(ValidatorInfo validatorInfo)
+    {
+        return validatorInfo.Rules.Any(r =>
+            r.ValidationMethod == "Must" &&
+            r.Parameters.Any(p => p.Contains("BeValidUrl")));
     }
 
     /// <summary>

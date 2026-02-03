@@ -13,14 +13,14 @@ public interface IValidatorGenerator
     /// <param name="validatorInfo">Information about the validator to generate</param>
     /// <returns>Generated C# source code for the validator class</returns>
     string Generate(ValidatorInfo validatorInfo);
-    
+
     /// <summary>
     /// Generates a validator for a command.
     /// </summary>
     /// <param name="commandInfo">Information about the command</param>
     /// <returns>Generated C# source code for the validator class</returns>
     string GenerateForCommand(CommandInfo commandInfo);
-    
+
     /// <summary>
     /// Generates a validator for a query.
     /// </summary>

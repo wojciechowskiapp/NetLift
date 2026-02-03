@@ -13,7 +13,7 @@ public interface ICommandGenerator
     /// <param name="commandInfo">Information about the command to generate</param>
     /// <returns>Generated C# source code for the command class</returns>
     string Generate(CommandInfo commandInfo);
-    
+
     /// <summary>
     /// Generates a CommandHandler class.
     /// </summary>

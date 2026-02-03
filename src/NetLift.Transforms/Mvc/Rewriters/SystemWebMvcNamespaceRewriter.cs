@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
+using NetLift.Transforms.Common;
 using NetLift.Transforms.Mvc.Configuration;
 
 namespace NetLift.Transforms.Mvc.Rewriters;
@@ -55,7 +56,10 @@ public sealed class SystemWebMvcNamespaceRewriter : CSharpSyntaxRewriter, IMvcNa
         }
 
         // Phase 2: Add new using directives and cleanup
-        rewritten = AddRequiredUsings(rewritten);
+        if (rewritten is CompilationUnitSyntax compilationUnit)
+        {
+            rewritten = compilationUnit.AddRequiredUsings(_requiredUsings);
+        }
         rewritten = RemoveDuplicateUsings(rewritten);
         rewritten = SortUsings(rewritten);
 
@@ -96,7 +100,10 @@ public sealed class SystemWebMvcNamespaceRewriter : CSharpSyntaxRewriter, IMvcNa
         }
 
         // Phase 2: Add new using directives and cleanup
-        rewritten = AddRequiredUsings(rewritten);
+        if (rewritten is CompilationUnitSyntax compilationUnit)
+        {
+            rewritten = compilationUnit.AddRequiredUsings(_requiredUsings);
+        }
         rewritten = RemoveDuplicateUsings(rewritten);
         rewritten = SortUsings(rewritten);
 
@@ -123,6 +130,18 @@ public sealed class SystemWebMvcNamespaceRewriter : CSharpSyntaxRewriter, IMvcNa
         }
 
         var namespaceName = node.Name.ToString();
+
+        // Check if this namespace should be removed entirely (no Core equivalent)
+        if (MvcNamespaceMappings.RemovableNamespaces.Contains(namespaceName))
+        {
+            _lowestConfidence = Math.Min(_lowestConfidence, 50);
+            _diagnostics.Add(new RewriterDiagnostic(
+                $"Removed using directive '{namespaceName}' - no ASP.NET Core equivalent exists. Manual migration required.",
+                RewriterDiagnosticSeverity.Warning));
+            // Return null to remove this using directive, but add a comment
+            // Actually, we can't add a comment directly - just return null and note it
+            return null;
+        }
 
         if (!MvcNamespaceMappings.RequiresMapping(namespaceName))
         {
@@ -230,37 +249,6 @@ public sealed class SystemWebMvcNamespaceRewriter : CSharpSyntaxRewriter, IMvcNa
         return visited;
     }
 
-    /// <summary>
-    /// Adds required using directives that were identified during rewriting.
-    /// </summary>
-    private SyntaxNode AddRequiredUsings(SyntaxNode root)
-    {
-        if (_requiredUsings.Count == 0)
-        {
-            return root;
-        }
-
-        // Find existing compilation unit or namespace declaration
-        if (root is CompilationUnitSyntax compilationUnit)
-        {
-            var existingUsings = compilationUnit.Usings
-                .Select(u => u.Name?.ToString())
-                .Where(n => n != null)
-                .ToHashSet(StringComparer.Ordinal);
-
-            var newUsings = _requiredUsings
-                .Where(ns => !existingUsings.Contains(ns) && !string.IsNullOrWhiteSpace(ns))
-                .Select(ns => SyntaxFactory.UsingDirective(SyntaxFactory.ParseName(ns)))
-                .ToList();
-
-            if (newUsings.Count > 0)
-            {
-                return compilationUnit.AddUsings(newUsings.ToArray());
-            }
-        }
-
-        return root;
-    }
 
     /// <summary>
     /// Removes duplicate using directives after rewriting.

@@ -552,10 +552,8 @@ public sealed class RazorViewTransformerTests
         // Act
         var result = _transformer.TransformContent(input, filePath);
 
-        // Assert
-        // Note: EditorFor transformation is not implemented in TransformContent
-        // It's only in TransformHtmlHelper method which is not called by TransformContent
-        result.Should().Contain("@Html.EditorFor(m => m.RichText)");
+        // Assert - EditorFor is now transformed to asp-for input tag helper
+        result.Should().Contain("<input asp-for=\"RichText\" />");
     }
 
     [Fact]

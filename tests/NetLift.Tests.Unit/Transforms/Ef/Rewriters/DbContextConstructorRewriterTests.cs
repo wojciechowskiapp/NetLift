@@ -225,7 +225,7 @@ namespace MyApp.Data
     }
 
     [Fact]
-    public void Rewrite_NoConstructors_NoTransformation()
+    public void Rewrite_NoConstructors_AddsEfCoreConstructor()
     {
         // Arrange
         var sourceCode = @"using System.Data.Entity;
@@ -241,11 +241,12 @@ namespace MyApp.Data
         // Act
         var result = _rewriter.Rewrite(sourceCode);
 
-        // Assert
-        result.Should().BeEquivalentTo(sourceCode);
-        _rewriter.ConfidenceScore.Should().Be(100);
+        // Assert - Constructor should be added for DI support
+        result.Should().Contain("public AppDbContext(DbContextOptions<AppDbContext> options) : base(options)");
+        result.Should().Contain("using Microsoft.EntityFrameworkCore;");
+        _rewriter.ConfidenceScore.Should().Be(95);
         _rewriter.Diagnostics.Should().Contain(d =>
-            d.Message.Contains("no explicit constructors"));
+            d.Message.Contains("no explicit constructors") && d.Message.Contains("adding EF Core constructor"));
     }
 
     [Fact]

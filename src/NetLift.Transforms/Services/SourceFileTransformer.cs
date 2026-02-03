@@ -390,11 +390,42 @@ public sealed class SourceFileTransformer : ISourceFileTransformer
         var confidenceScores = new List<int>();
         var current = sourceCode;
 
-        // Apply only namespace rewriting for generic files
+        // 1. Apply namespace rewriting for generic files
         current = ApplyRewriter(
             current,
             _mvcNamespaceRewriter,
             "MvcNamespaceRewriter",
+            transformers,
+            diagnostics,
+            confidenceScores,
+            filePath);
+
+        // 2. Apply HttpContext rewriting (handles HttpContextBase → HttpContext)
+        current = ApplyRewriter(
+            current,
+            _httpContextRewriter,
+            "HttpContextRewriter",
+            transformers,
+            diagnostics,
+            confidenceScores,
+            filePath);
+
+        // 3. Apply database initializer removal (handles DropCreateDatabaseIfModelChanges etc.)
+        current = ApplyRewriter(
+            current,
+            _databaseInitializerRemover,
+            "DatabaseInitializerRemover",
+            transformers,
+            diagnostics,
+            confidenceScores,
+            filePath);
+
+        // 4. Apply controller-like rewriting for class-level attributes (Bind, etc.)
+        // This handles model classes that use MVC attributes like [Bind(Exclude = "...")]
+        current = ApplyRewriter(
+            current,
+            _controllerBaseRewriter,
+            "ControllerBaseRewriter",
             transformers,
             diagnostics,
             confidenceScores,

@@ -140,8 +140,9 @@ public class ProjectReferenceConverterTests : IDisposable
     public void ConvertProjectReferences_WithRelativePath_SimplifiesPath()
     {
         // Arrange
-        var parentDir = Path.GetDirectoryName(_tempDirectory)!;
-        var siblingDir = Path.Combine(parentDir, "SiblingProject");
+        var parentDir = Path.GetDirectoryName(_tempDirectory);
+        parentDir.Should().NotBeNullOrEmpty("temp directory should have a valid parent directory");
+        var siblingDir = Path.Combine(parentDir!, "SiblingProject");
         Directory.CreateDirectory(siblingDir);
         var referencedProjectPath = Path.Combine(siblingDir, "Sibling.csproj");
         File.WriteAllText(referencedProjectPath, "<Project />");

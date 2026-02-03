@@ -16,10 +16,10 @@ public interface IControllerAnalyzer
     /// <param name="cancellationToken">Cancellation token</param>
     /// <returns>ControllerInfo if file contains a controller, null otherwise</returns>
     Task<ControllerInfo?> AnalyzeAsync(
-        string filePath, 
-        string sourceCode, 
+        string filePath,
+        string sourceCode,
         CancellationToken cancellationToken = default);
-    
+
     /// <summary>
     /// Analyzes all controllers in a project.
     /// </summary>

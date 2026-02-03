@@ -22,6 +22,20 @@ using NetLift.Transforms.Modernization;
 using NetLift.Transforms.Modernization.Analyzers;
 using NetLift.Transforms.Modernization.Generators;
 using NetLift.Core.Interfaces.Modernization;
+using NetLift.Core.Interfaces.Razor;
+using NetLift.Core.Interfaces.StaticFiles;
+using NetLift.Core.Interfaces.SignalR;
+using NetLift.Core.Interfaces.DependencyInjection;
+using NetLift.Transforms.Razor.Analyzers;
+using NetLift.Transforms.Razor.Transformers;
+using NetLift.Transforms.StaticFiles.Analyzers;
+using NetLift.Transforms.StaticFiles.Migrators;
+using NetLift.Transforms.SignalR.Analyzers;
+using NetLift.Transforms.SignalR.Transformers;
+using NetLift.Transforms.SignalR.Generators;
+using NetLift.Transforms.DependencyInjection.Detectors;
+using NetLift.Transforms.DependencyInjection.Mappers;
+using NetLift.Transforms.DependencyInjection.Analyzers;
 
 namespace NetLift.Tests.Integration.E2E;
 
@@ -130,6 +144,25 @@ public class MigrationE2ETests : E2ETestBase
         services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
         services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
         services.AddSingleton<IPackageJsonGenerator, PackageJsonGenerator>();
+
+        // Register Razor analyzers and transformers
+        services.AddSingleton<IRazorViewAnalyzer, RazorViewAnalyzer>();
+        services.AddSingleton<IRazorViewTransformer, RazorViewTransformer>();
+
+        // Register Static Files analyzers and migrators
+        services.AddSingleton<IStaticFilesAnalyzer, StaticFilesAnalyzer>();
+        services.AddSingleton<IStaticFilesMigrator, StaticFilesMigrator>();
+
+        // Register SignalR analyzers, transformers, and generators
+        services.AddSingleton<ISignalRHubAnalyzer, SignalRHubAnalyzer>();
+        services.AddSingleton<ISignalRHubTransformer, SignalRHubTransformer>();
+        services.AddSingleton<ISignalRStartupGenerator, SignalRStartupGenerator>();
+        services.AddSingleton<IGlobalHostAnalyzer, GlobalHostAnalyzer>();
+
+        // Register DI Container analyzers, detectors, and mappers
+        services.AddSingleton<IDIContainerDetector, DIContainerDetector>();
+        services.AddSingleton<ILifetimeMapper, LifetimeMapper>();
+        services.AddSingleton<IDIContainerAnalyzer, AutofacAnalyzer>();
 
         // Register EF analyzers and rewriters
         services.AddSingleton<IDbContextDetector, DbContextDetector>();
@@ -301,10 +334,11 @@ public class MigrationE2ETests : E2ETestBase
         // Apply changes to disk
         await ApplyChangesAsync(result.Changes);
 
-        var projectDir = Path.GetDirectoryName(projectPath)!;
+        var projectDir = Path.GetDirectoryName(projectPath);
+        projectDir.Should().NotBeNullOrEmpty("project path should have a valid directory");
 
         // Verify appsettings.json
-        var appSettingsPath = Path.Combine(projectDir, "appsettings.json");
+        var appSettingsPath = Path.Combine(projectDir!, "appsettings.json");
         File.Exists(appSettingsPath).Should().BeTrue("appsettings.json should be generated");
 
         var appSettingsContent = await File.ReadAllTextAsync(appSettingsPath);
@@ -312,8 +346,8 @@ public class MigrationE2ETests : E2ETestBase
         appSettingsContent.Should().NotBeEmpty();
 
         // Verify environment-specific files
-        var devSettingsPath = Path.Combine(projectDir, "appsettings.Development.json");
-        var prodSettingsPath = Path.Combine(projectDir, "appsettings.Production.json");
+        var devSettingsPath = Path.Combine(projectDir!, "appsettings.Development.json");
+        var prodSettingsPath = Path.Combine(projectDir!, "appsettings.Production.json");
 
         if (File.Exists(devSettingsPath))
         {

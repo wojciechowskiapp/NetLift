@@ -28,4 +28,23 @@ public sealed class ProgramGenerationOptions
     /// Defaults to true.
     /// </summary>
     public bool IncludeHealthChecks { get; init; } = true;
+
+    /// <summary>
+    /// Gets a value indicating whether this is an MVC app with Razor views.
+    /// If true, uses AddControllersWithViews() instead of AddControllers().
+    /// Defaults to false (API-style).
+    /// </summary>
+    public bool IsMvcWithViews { get; init; }
+
+    /// <summary>
+    /// Gets the DbContext type name to register, if any.
+    /// When set, generates DbContext registration with connection string.
+    /// </summary>
+    public string? DbContextName { get; init; }
+
+    /// <summary>
+    /// Gets the connection string name to use for DbContext registration.
+    /// Defaults to "DefaultConnection".
+    /// </summary>
+    public string ConnectionStringName { get; init; } = "DefaultConnection";
 }

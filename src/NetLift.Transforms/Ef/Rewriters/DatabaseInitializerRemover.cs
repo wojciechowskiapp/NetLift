@@ -63,6 +63,169 @@ public sealed class DatabaseInitializerRemover : CSharpSyntaxRewriter, IDatabase
         return rewritten.ToFullString();
     }
 
+    // EF6 database initializer base class names
+    private static readonly HashSet<string> InitializerBaseClasses = new(StringComparer.Ordinal)
+    {
+        "CreateDatabaseIfNotExists",
+        "DropCreateDatabaseIfModelChanges",
+        "DropCreateDatabaseAlways",
+        "MigrateDatabaseToLatestVersion"
+    };
+
+    /// <summary>
+    /// Visits class declarations to detect and transform classes inheriting from EF6 initializers.
+    /// </summary>
+    public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node)
+    {
+        var visited = (ClassDeclarationSyntax?)base.VisitClassDeclaration(node);
+        if (visited == null || visited.BaseList == null)
+        {
+            return visited;
+        }
+
+        // Check if the base class is an EF6 initializer
+        var firstBaseType = visited.BaseList.Types.FirstOrDefault();
+        if (firstBaseType == null)
+        {
+            return visited;
+        }
+
+        var baseTypeName = ExtractBaseTypeName(firstBaseType.Type);
+        if (!InitializerBaseClasses.Contains(baseTypeName))
+        {
+            return visited;
+        }
+
+        // Extract context type from the generic argument
+        var contextType = ExtractContextType(firstBaseType.Type);
+
+        // Remove the base class
+        var remainingBaseTypes = visited.BaseList.Types.Skip(1).ToList();
+        ClassDeclarationSyntax result;
+
+        if (remainingBaseTypes.Count == 0)
+        {
+            // No other base types, remove the entire base list
+            result = visited.WithBaseList(null);
+        }
+        else
+        {
+            // Keep other interfaces
+            var newBaseList = SyntaxFactory.BaseList(
+                SyntaxFactory.SeparatedList(remainingBaseTypes));
+            result = visited.WithBaseList(newBaseList);
+        }
+
+        // Remove 'override' modifier from all methods (they were overriding the removed base class)
+        result = RemoveOverrideModifiers(result);
+
+        // Add TODO comment with migration guidance
+        var guidanceComment = GenerateClassGuidanceComment(baseTypeName, contextType, visited.Identifier.Text);
+        var leadingTrivia = result.GetLeadingTrivia();
+        var commentTrivia = SyntaxFactory.Comment(guidanceComment);
+        result = result.WithLeadingTrivia(
+            leadingTrivia.Add(commentTrivia).Add(SyntaxFactory.EndOfLine("\n")));
+
+        _lowestConfidence = Math.Min(_lowestConfidence, 70);
+        _diagnostics.Add(new RewriterDiagnostic(
+            $"Removed {baseTypeName}<{contextType}> base class from {visited.Identifier.Text} - class needs manual conversion to use EF Core migrations or HasData() seeding",
+            RewriterDiagnosticSeverity.Warning));
+
+        _removedInitializers.Add(new RemovedInitializerInfo(
+            baseTypeName,
+            contextType,
+            $"class {visited.Identifier.Text} : {firstBaseType.Type}"));
+
+        return result;
+    }
+
+    /// <summary>
+    /// Extracts the base type name without generic arguments.
+    /// </summary>
+    private static string ExtractBaseTypeName(TypeSyntax type)
+    {
+        return type switch
+        {
+            GenericNameSyntax generic => generic.Identifier.Text,
+            IdentifierNameSyntax identifier => identifier.Identifier.Text,
+            QualifiedNameSyntax qualified => ExtractBaseTypeName(qualified.Right),
+            _ => string.Empty
+        };
+    }
+
+    /// <summary>
+    /// Extracts the context type from a generic type.
+    /// </summary>
+    private static string ExtractContextType(TypeSyntax type)
+    {
+        if (type is GenericNameSyntax generic && generic.TypeArgumentList.Arguments.Count > 0)
+        {
+            return generic.TypeArgumentList.Arguments[0].ToString();
+        }
+        return "DbContext";
+    }
+
+    /// <summary>
+    /// Removes 'override' modifier from all methods in a class.
+    /// Used when the base class is removed and override methods become regular methods.
+    /// </summary>
+    private static ClassDeclarationSyntax RemoveOverrideModifiers(ClassDeclarationSyntax classDecl)
+    {
+        var newMembers = new SyntaxList<MemberDeclarationSyntax>();
+
+        foreach (var member in classDecl.Members)
+        {
+            if (member is MethodDeclarationSyntax method)
+            {
+                var overrideToken = method.Modifiers.FirstOrDefault(m => m.IsKind(SyntaxKind.OverrideKeyword));
+                if (overrideToken != default)
+                {
+                    // Remove the override modifier
+                    var newModifiers = method.Modifiers.Remove(overrideToken);
+
+                    // If the method was protected override, make it public (common pattern for Seed)
+                    var protectedToken = newModifiers.FirstOrDefault(m => m.IsKind(SyntaxKind.ProtectedKeyword));
+                    if (protectedToken != default)
+                    {
+                        newModifiers = newModifiers.Remove(protectedToken);
+                        newModifiers = newModifiers.Insert(0, SyntaxFactory.Token(SyntaxKind.PublicKeyword).WithTrailingTrivia(SyntaxFactory.Space));
+                    }
+
+                    var newMethod = method.WithModifiers(newModifiers);
+                    newMembers = newMembers.Add(newMethod);
+                    continue;
+                }
+            }
+            newMembers = newMembers.Add(member);
+        }
+
+        return classDecl.WithMembers(newMembers);
+    }
+
+    /// <summary>
+    /// Generates guidance comment for classes inheriting from EF6 initializers.
+    /// </summary>
+    private static string GenerateClassGuidanceComment(string initializerType, string contextType, string className)
+    {
+        return $@"// TODO: EF Core migration guidance for {className}
+// This class inherited from {initializerType}<{contextType}> which doesn't exist in EF Core.
+//
+// Options for migrating the Seed() method:
+// 1. Use HasData() in OnModelCreating for static seed data:
+//    modelBuilder.Entity<Genre>().HasData(new Genre {{ GenreId = 1, Name = ""Rock"" }});
+//
+// 2. Create a separate seed service called from Program.cs:
+//    public class DataSeeder {{ public void Seed({contextType} context) {{ ... }} }}
+//
+// 3. Use EF Core migrations with data seeding in migrations.
+//
+// For database initialization, use in Program.cs:
+//    var scope = app.Services.CreateScope();
+//    var db = scope.ServiceProvider.GetRequiredService<{contextType}>();
+//    db.Database.Migrate(); // or db.Database.EnsureCreated()
+";
+    }
+
     /// <summary>
     /// Visits expression statements to detect and remove Database.SetInitializer calls.
     /// </summary>

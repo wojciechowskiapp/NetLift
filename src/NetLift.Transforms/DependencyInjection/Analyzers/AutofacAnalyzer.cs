@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -10,7 +9,7 @@ namespace NetLift.Transforms.DependencyInjection.Analyzers;
 /// <summary>
 /// Analyzes Autofac service registrations using Roslyn.
 /// </summary>
-public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
+public sealed class AutofacAnalyzer : IAutofacAnalyzer
 {
     private readonly ILifetimeMapper _lifetimeMapper;
 
@@ -140,7 +139,7 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
                             ModuleTypeName = GetFullTypeName(classDecl),
                             FilePath = file,
                             Registrations = registrations,
-                            Dependencies = ExtractModuleDependencies(content),
+                            Dependencies = ExtractModuleDependencies(root),
                             RegistrationOrder = modules.Count
                         });
                     }
@@ -169,11 +168,20 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         if (!content.Contains("ContainerBuilder") && !content.Contains("RegisterType"))
             return registrations;
 
-        // Parse using regex for common patterns
-        registrations.AddRange(ParseRegisterTypePatterns(content));
-        registrations.AddRange(ParseRegisterGenericPatterns(content));
-        registrations.AddRange(ParseRegisterInstancePatterns(content));
-        registrations.AddRange(ParseFactoryPatterns(content));
+        var tree = CSharpSyntaxTree.ParseText(content);
+        var root = tree.GetRoot();
+
+        // Find all invocation expressions
+        var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            var registration = TryParseRegistration(invocation, content, "");
+            if (registration != null)
+            {
+                registrations.Add(registration);
+            }
+        }
 
         return registrations;
     }
@@ -220,10 +228,11 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         var fullExpression = GetFullChainedExpression(invocation);
         var expressionText = fullExpression.ToString();
 
-        var implType = ExtractGenericArgument(expressionText, "RegisterType");
-        var serviceType = ExtractGenericArgument(expressionText, "As") ?? implType;
-        var lifetime = ExtractLifetime(expressionText);
-        var namedKey = ExtractNamedKey(expressionText);
+        // Extract generic type from RegisterType<T>
+        var implType = ExtractGenericTypeFromMethod(fullExpression, "RegisterType");
+        var serviceType = ExtractGenericTypeFromMethod(fullExpression, "As") ?? implType;
+        var lifetime = ExtractLifetimeFromExpression(fullExpression);
+        var namedKey = ExtractNamedKeyFromExpression(fullExpression);
 
         if (string.IsNullOrEmpty(implType))
             return null;
@@ -246,7 +255,7 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         };
 
         // Check for property injection
-        if (expressionText.Contains("PropertiesAutowired"))
+        if (HasMethodInChain(fullExpression, "PropertiesAutowired"))
         {
             registration = registration with
             {
@@ -261,9 +270,10 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         }
 
         // Check for interceptors
-        if (expressionText.Contains("EnableInterfaceInterceptors") || expressionText.Contains("InterceptedBy"))
+        if (HasMethodInChain(fullExpression, "EnableInterfaceInterceptors") ||
+            HasMethodInChain(fullExpression, "InterceptedBy"))
         {
-            var interceptorType = ExtractInterceptorType(expressionText);
+            var interceptorType = ExtractInterceptorTypeFromExpression(fullExpression);
             registration = registration with
             {
                 Interceptor = new InterceptorInfo
@@ -285,27 +295,21 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         var fullExpression = GetFullChainedExpression(invocation);
         var expressionText = fullExpression.ToString();
 
-        // Extract typeof(...) arguments
-        var implTypeMatch = TypeofRegex().Match(expressionText);
-        var implType = implTypeMatch.Success ? implTypeMatch.Groups[1].Value : null;
-
-        var serviceType = implType;
-        var asMatch = AsTypeofRegex().Match(expressionText);
-        if (asMatch.Success)
-        {
-            serviceType = asMatch.Groups[1].Value;
-        }
-
+        // Extract typeof(...) arguments from RegisterGeneric
+        var implType = ExtractTypeofArgument(invocation);
         if (string.IsNullOrEmpty(implType))
             return null;
 
-        var lifetime = ExtractLifetime(expressionText);
+        // Check if there's an As(typeof(...)) call
+        var serviceType = ExtractTypeofFromAsMethod(fullExpression) ?? implType;
+
+        var lifetime = ExtractLifetimeFromExpression(fullExpression);
         var mapping = _lifetimeMapper.MapLifetime(lifetime, DIFrameworkType.Autofac);
         var lineNumber = GetLineNumber(content, invocation.SpanStart);
 
         return new ServiceRegistrationInfo
         {
-            ServiceType = serviceType ?? implType,
+            ServiceType = serviceType,
             ImplementationType = implType,
             Lifetime = mapping.TargetLifetime,
             Method = RegistrationMethod.Generic,
@@ -323,8 +327,8 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         var expressionText = fullExpression.ToString();
         var lineNumber = GetLineNumber(content, invocation.SpanStart);
 
-        var serviceType = ExtractGenericArgument(expressionText, "As")
-                          ?? ExtractGenericArgument(expressionText, "RegisterInstance")
+        var serviceType = ExtractGenericTypeFromMethod(fullExpression, "As")
+                          ?? ExtractGenericTypeFromMethod(fullExpression, "RegisterInstance")
                           ?? "object";
 
         return new ServiceRegistrationInfo
@@ -346,24 +350,19 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         var fullExpression = GetFullChainedExpression(invocation);
         var expressionText = fullExpression.ToString();
 
-        var serviceType = ExtractGenericArgument(expressionText, "As") ?? "object";
-        var lifetime = ExtractLifetime(expressionText);
+        var serviceType = ExtractGenericTypeFromMethod(fullExpression, "As") ?? "object";
+        var lifetime = ExtractLifetimeFromExpression(fullExpression);
         var mapping = _lifetimeMapper.MapLifetime(lifetime, DIFrameworkType.Autofac);
         var lineNumber = GetLineNumber(content, invocation.SpanStart);
 
-        // Extract factory lambda
-        var lambdaMatch = LambdaRegex().Match(expressionText);
-        var factoryExpression = lambdaMatch.Success ? lambdaMatch.Groups[1].Value : expressionText;
+        // Extract factory lambda using Roslyn
+        var lambda = ExtractLambdaExpression(invocation);
+        var factoryExpression = lambda?.ToString() ?? expressionText;
 
-        // Detect dependencies in factory
-        var dependencies = ResolveRegex().Matches(factoryExpression)
-            .Select(m => m.Groups[1].Value)
-            .Distinct()
-            .ToList();
+        // Detect dependencies in factory by finding Resolve<T>() calls
+        var dependencies = ExtractResolveDependencies(lambda);
 
-        var isSimple = !factoryExpression.Contains("if") &&
-                       !factoryExpression.Contains("switch") &&
-                       !factoryExpression.Contains("?");
+        var isSimple = lambda != null && IsSimpleLambda(lambda);
 
         return new ServiceRegistrationInfo
         {
@@ -390,7 +389,7 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
     {
         var fullExpression = GetFullChainedExpression(invocation);
         var expressionText = fullExpression.ToString();
-        var lifetime = ExtractLifetime(expressionText);
+        var lifetime = ExtractLifetimeFromExpression(fullExpression);
         var mapping = _lifetimeMapper.MapLifetime(lifetime, DIFrameworkType.Autofac);
         var lineNumber = GetLineNumber(content, invocation.SpanStart);
 
@@ -408,80 +407,6 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         };
     }
 
-    private List<ServiceRegistrationInfo> ParseRegisterTypePatterns(string content)
-    {
-        var registrations = new List<ServiceRegistrationInfo>();
-        var matches = RegisterTypeRegex().Matches(content);
-
-        foreach (Match match in matches)
-        {
-            var implType = match.Groups[1].Value;
-            var serviceType = match.Groups.Count > 2 && !string.IsNullOrEmpty(match.Groups[2].Value)
-                ? match.Groups[2].Value
-                : implType;
-
-            registrations.Add(new ServiceRegistrationInfo
-            {
-                ServiceType = serviceType,
-                ImplementationType = implType,
-                Lifetime = ServiceLifetime.Transient,
-                Method = RegistrationMethod.Type,
-                SourceCode = match.Value,
-                ConfidenceScore = 90
-            });
-        }
-
-        return registrations;
-    }
-
-    private List<ServiceRegistrationInfo> ParseRegisterGenericPatterns(string content)
-    {
-        var registrations = new List<ServiceRegistrationInfo>();
-        var matches = RegisterGenericRegex().Matches(content);
-
-        foreach (Match match in matches)
-        {
-            registrations.Add(new ServiceRegistrationInfo
-            {
-                ServiceType = match.Groups[1].Value,
-                ImplementationType = match.Groups[1].Value,
-                Lifetime = ServiceLifetime.Transient,
-                Method = RegistrationMethod.Generic,
-                SourceCode = match.Value,
-                ConfidenceScore = 90
-            });
-        }
-
-        return registrations;
-    }
-
-    private List<ServiceRegistrationInfo> ParseRegisterInstancePatterns(string content)
-    {
-        var registrations = new List<ServiceRegistrationInfo>();
-        var matches = RegisterInstanceRegex().Matches(content);
-
-        foreach (Match match in matches)
-        {
-            registrations.Add(new ServiceRegistrationInfo
-            {
-                ServiceType = match.Groups[1].Value,
-                ImplementationType = match.Groups[1].Value,
-                Lifetime = ServiceLifetime.Singleton,
-                Method = RegistrationMethod.Instance,
-                SourceCode = match.Value,
-                ConfidenceScore = 95
-            });
-        }
-
-        return registrations;
-    }
-
-    private List<ServiceRegistrationInfo> ParseFactoryPatterns(string content)
-    {
-        // Complex pattern - rely on Roslyn parsing
-        return [];
-    }
-
     private static SyntaxNode GetFullChainedExpression(InvocationExpressionSyntax invocation)
     {
         SyntaxNode current = invocation;
@@ -492,48 +417,207 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
         return current;
     }
 
-    private static string? ExtractGenericArgument(string expression, string methodName)
+    /// <summary>
+    /// Extracts generic type argument from a method call like RegisterType&lt;MyService&gt;() or As&lt;IService&gt;()
+    /// </summary>
+    private static string? ExtractGenericTypeFromMethod(SyntaxNode expression, string methodName)
     {
-        var pattern = $@"{methodName}<([^>]+)>";
-        var match = Regex.Match(expression, pattern);
-        return match.Success ? match.Groups[1].Value : null;
-    }
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
 
-    private static string ExtractLifetime(string expression)
-    {
-        if (expression.Contains("SingleInstance"))
-            return "SingleInstance";
-        if (expression.Contains("InstancePerLifetimeScope"))
-            return "InstancePerLifetimeScope";
-        if (expression.Contains("InstancePerRequest"))
-            return "InstancePerRequest";
-        if (expression.Contains("InstancePerDependency"))
-            return "InstancePerDependency";
-        if (expression.Contains("InstancePerMatchingLifetimeScope"))
-            return "InstancePerMatchingLifetimeScope";
-        if (expression.Contains("ExternallyOwned"))
-            return "ExternallyOwned";
-
-        return "InstancePerDependency"; // Default
-    }
-
-    private static string? ExtractNamedKey(string expression)
-    {
-        var namedMatch = Regex.Match(expression, @"Named<[^>]+>\(""([^""]+)""\)");
-        if (namedMatch.Success)
-            return namedMatch.Groups[1].Value;
-
-        var keyedMatch = Regex.Match(expression, @"Keyed<[^>]+>\(([^)]+)\)");
-        if (keyedMatch.Success)
-            return keyedMatch.Groups[1].Value;
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is GenericNameSyntax genericName &&
+                genericName.Identifier.Text == methodName)
+            {
+                var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
+                return typeArg?.ToString();
+            }
+        }
 
         return null;
     }
 
-    private static string? ExtractInterceptorType(string expression)
+    /// <summary>
+    /// Extracts typeof argument from expressions like RegisterGeneric(typeof(MyService))
+    /// </summary>
+    private static string? ExtractTypeofArgument(InvocationExpressionSyntax invocation)
     {
-        var match = Regex.Match(expression, @"InterceptedBy\(typeof\(([^)]+)\)\)");
-        return match.Success ? match.Groups[1].Value : null;
+        var typeofExpr = invocation.ArgumentList?.Arguments
+            .Select(a => a.Expression)
+            .OfType<TypeOfExpressionSyntax>()
+            .FirstOrDefault();
+
+        return typeofExpr?.Type.ToString();
+    }
+
+    /// <summary>
+    /// Extracts typeof from As(typeof(...)) method calls
+    /// </summary>
+    private static string? ExtractTypeofFromAsMethod(SyntaxNode expression)
+    {
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name.Identifier.Text == "As")
+            {
+                var typeofExpr = invocation.ArgumentList?.Arguments
+                    .Select(a => a.Expression)
+                    .OfType<TypeOfExpressionSyntax>()
+                    .FirstOrDefault();
+
+                if (typeofExpr != null)
+                    return typeofExpr.Type.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts lifetime from method chain like .SingleInstance() or .InstancePerLifetimeScope()
+    /// </summary>
+    private static string ExtractLifetimeFromExpression(SyntaxNode expression)
+    {
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                var methodName = memberAccess.Name.Identifier.Text;
+                if (methodName is "SingleInstance" or "InstancePerLifetimeScope" or "InstancePerRequest" or
+                    "InstancePerDependency" or "InstancePerMatchingLifetimeScope" or "ExternallyOwned")
+                {
+                    return methodName;
+                }
+            }
+        }
+
+        return "InstancePerDependency"; // Default
+    }
+
+    /// <summary>
+    /// Extracts named/keyed key from Named&lt;T&gt;("key") or Keyed&lt;T&gt;(key)
+    /// </summary>
+    private static string? ExtractNamedKeyFromExpression(SyntaxNode expression)
+    {
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is GenericNameSyntax genericName)
+            {
+                var methodName = genericName.Identifier.Text;
+                if (methodName is "Named" or "Keyed")
+                {
+                    var arg = invocation.ArgumentList?.Arguments.FirstOrDefault();
+                    if (arg?.Expression is LiteralExpressionSyntax literal)
+                    {
+                        return literal.Token.ValueText;
+                    }
+                    return arg?.Expression.ToString();
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Extracts interceptor type from InterceptedBy(typeof(MyInterceptor))
+    /// </summary>
+    private static string? ExtractInterceptorTypeFromExpression(SyntaxNode expression)
+    {
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name.Identifier.Text == "InterceptedBy")
+            {
+                var typeofExpr = invocation.ArgumentList?.Arguments
+                    .Select(a => a.Expression)
+                    .OfType<TypeOfExpressionSyntax>()
+                    .FirstOrDefault();
+
+                if (typeofExpr != null)
+                    return typeofExpr.Type.ToString();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Checks if a method exists in the call chain
+    /// </summary>
+    private static bool HasMethodInChain(SyntaxNode expression, string methodName)
+    {
+        var invocations = expression.DescendantNodesAndSelf().OfType<InvocationExpressionSyntax>();
+
+        return invocations.Any(invocation =>
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess)
+            {
+                var name = memberAccess.Name is GenericNameSyntax genericName
+                    ? genericName.Identifier.Text
+                    : memberAccess.Name.Identifier.Text;
+                return name == methodName;
+            }
+            return false;
+        });
+    }
+
+    /// <summary>
+    /// Extracts lambda expression from Register(c => ...) calls
+    /// </summary>
+    private static LambdaExpressionSyntax? ExtractLambdaExpression(InvocationExpressionSyntax invocation)
+    {
+        return invocation.ArgumentList?.Arguments
+            .Select(a => a.Expression)
+            .OfType<LambdaExpressionSyntax>()
+            .FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Extracts dependencies from lambda by finding Resolve&lt;T&gt;() calls
+    /// </summary>
+    private static List<string> ExtractResolveDependencies(LambdaExpressionSyntax? lambda)
+    {
+        if (lambda == null)
+            return [];
+
+        var dependencies = new List<string>();
+        var invocations = lambda.DescendantNodes().OfType<InvocationExpressionSyntax>();
+
+        foreach (var invocation in invocations)
+        {
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is GenericNameSyntax genericName &&
+                genericName.Identifier.Text == "Resolve")
+            {
+                var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
+                if (typeArg != null)
+                {
+                    dependencies.Add(typeArg.ToString());
+                }
+            }
+        }
+
+        return dependencies.Distinct().ToList();
+    }
+
+    /// <summary>
+    /// Checks if lambda is simple (no conditionals)
+    /// </summary>
+    private static bool IsSimpleLambda(LambdaExpressionSyntax lambda)
+    {
+        var descendants = lambda.DescendantNodes();
+        return !descendants.Any(n => n is IfStatementSyntax or SwitchStatementSyntax or ConditionalExpressionSyntax);
     }
 
     private static int GetLineNumber(string content, int position)
@@ -562,40 +646,25 @@ public sealed partial class AutofacAnalyzer : IAutofacAnalyzer
             : $"{namespaceName}.{classDecl.Identifier.Text}";
     }
 
-    private static IReadOnlyList<string> ExtractModuleDependencies(string content)
+    private static IReadOnlyList<string> ExtractModuleDependencies(SyntaxNode root)
     {
         var dependencies = new List<string>();
-        var matches = RegisterModuleRegex().Matches(content);
+        var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
 
-        foreach (Match match in matches)
+        foreach (var invocation in invocations)
         {
-            dependencies.Add(match.Groups[1].Value);
+            if (invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+                memberAccess.Name is GenericNameSyntax genericName &&
+                genericName.Identifier.Text == "RegisterModule")
+            {
+                var typeArg = genericName.TypeArgumentList.Arguments.FirstOrDefault();
+                if (typeArg != null)
+                {
+                    dependencies.Add(typeArg.ToString());
+                }
+            }
         }
 
         return dependencies;
     }
-
-    [GeneratedRegex(@"RegisterType<([^>]+)>.*?(?:\.As<([^>]+)>)?", RegexOptions.Compiled)]
-    private static partial Regex RegisterTypeRegex();
-
-    [GeneratedRegex(@"RegisterGeneric\(typeof\(([^)]+)\)\)", RegexOptions.Compiled)]
-    private static partial Regex RegisterGenericRegex();
-
-    [GeneratedRegex(@"RegisterInstance<([^>]+)>", RegexOptions.Compiled)]
-    private static partial Regex RegisterInstanceRegex();
-
-    [GeneratedRegex(@"typeof\(([^)]+)\)", RegexOptions.Compiled)]
-    private static partial Regex TypeofRegex();
-
-    [GeneratedRegex(@"\.As\(typeof\(([^)]+)\)\)", RegexOptions.Compiled)]
-    private static partial Regex AsTypeofRegex();
-
-    [GeneratedRegex(@"Register\([^)]*=>\s*(.+)\)", RegexOptions.Compiled)]
-    private static partial Regex LambdaRegex();
-
-    [GeneratedRegex(@"\.Resolve<([^>]+)>\(\)", RegexOptions.Compiled)]
-    private static partial Regex ResolveRegex();
-
-    [GeneratedRegex(@"RegisterModule<([^>]+)>", RegexOptions.Compiled)]
-    private static partial Regex RegisterModuleRegex();
 }

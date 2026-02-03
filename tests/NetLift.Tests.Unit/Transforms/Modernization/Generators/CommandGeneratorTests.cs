@@ -6,7 +6,21 @@ namespace NetLift.Tests.Unit.Transforms.Modernization.Generators;
 
 public sealed class CommandGeneratorTests
 {
-    private readonly CommandGenerator _generator = new();
+    private readonly CommandGenerator _generator = new()
+    {
+        // Disable new features for backward-compatible tests
+        IncludeLogger = false,
+        IncludeAuditTrail = false,
+        IncludeConfigureAwait = false
+    };
+
+    private readonly CommandGenerator _productionGenerator = new()
+    {
+        // Full production features enabled
+        IncludeLogger = true,
+        IncludeAuditTrail = true,
+        IncludeConfigureAwait = true
+    };
 
     [Fact]
     public void Generate_CreatesSimpleCommandWithNoProperties()
@@ -297,10 +311,10 @@ public sealed class CommandGeneratorTests
         // Act
         var result = _generator.Generate(commandInfo);
 
-        // Assert - Handler implementation is in the same file
+        // Assert - Handler implementation is in the same file (using modern C# patterns)
         result.Should().Contain("var entity = await _context.Students.FindAsync");
-        result.Should().Contain("if (entity == null)");
-        result.Should().Contain("return Result.Failure(\"Student not found\");");
+        result.Should().Contain("if (entity is null)");
+        result.Should().Contain("return Result.Failure(Error.NotFound);");
         result.Should().Contain("entity.LastName = request.LastName;");
         result.Should().Contain("await _context.SaveChangesAsync(cancellationToken);");
         result.Should().Contain("return Result.Success();");
@@ -332,9 +346,9 @@ public sealed class CommandGeneratorTests
         // Act
         var result = _generator.Generate(commandInfo);
 
-        // Assert - Handler implementation is in the same file
+        // Assert - Handler implementation is in the same file (using modern C# patterns)
         result.Should().Contain("var entity = await _context.Students.FindAsync");
-        result.Should().Contain("if (entity == null)");
+        result.Should().Contain("if (entity is null)");
         result.Should().Contain("_context.Students.Remove(entity);");
         result.Should().Contain("await _context.SaveChangesAsync(cancellationToken);");
     }
@@ -517,7 +531,7 @@ public sealed class CommandGeneratorTests
 
         // Assert - Response DTO is generated
         result.Should().Contain("public record CatalogItemResponseDto");
-        result.Should().Contain("public IEnumerable<SelectListItem> CatalogBrandId { get; init; }");
+        result.Should().Contain("public IEnumerable<SelectListItem> CatalogBrandId { get; set; }");
         result.Should().Contain("Response DTO for CreateCatalogItemCommand containing ViewBag/ViewData properties.");
 
         // Assert - using statement for SelectListItem
@@ -558,7 +572,7 @@ public sealed class CommandGeneratorTests
         var result = _generator.Generate(commandInfo);
 
         // Assert
-        result.Should().Contain("public string Message { get; init; }");
+        result.Should().Contain("public string Message { get; set; }");
     }
 
     [Fact]
@@ -591,7 +605,7 @@ public sealed class CommandGeneratorTests
         var result = _generator.Generate(commandInfo);
 
         // Assert
-        result.Should().Contain("public int Count { get; init; }");
+        result.Should().Contain("public int Count { get; set; }");
     }
 
     [Fact]
@@ -624,7 +638,7 @@ public sealed class CommandGeneratorTests
         var result = _generator.Generate(commandInfo);
 
         // Assert
-        result.Should().Contain("public bool IsActive { get; init; }");
+        result.Should().Contain("public bool IsActive { get; set; }");
     }
 
     [Fact]
@@ -657,7 +671,7 @@ public sealed class CommandGeneratorTests
         var result = _generator.Generate(commandInfo);
 
         // Assert
-        result.Should().Contain("public object? Data { get; init; }");
+        result.Should().Contain("public object? Data { get; set; }");
         result.Should().Contain("TODO: Review type inference");
     }
 
@@ -710,9 +724,9 @@ public sealed class CommandGeneratorTests
         var result = _generator.Generate(commandInfo);
 
         // Assert - All properties in DTO
-        result.Should().Contain("public IEnumerable<SelectListItem> Brands { get; init; }");
-        result.Should().Contain("public IEnumerable<SelectListItem> Types { get; init; }");
-        result.Should().Contain("public string Title { get; init; }");
+        result.Should().Contain("public IEnumerable<SelectListItem> Brands { get; set; }");
+        result.Should().Contain("public IEnumerable<SelectListItem> Types { get; set; }");
+        result.Should().Contain("public string Title { get; set; }");
     }
 
     [Fact]
