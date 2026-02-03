@@ -25,55 +25,60 @@
 
 ## Tier 1 - Critical (Must Have)
 
-### Sprint 13-16: DI Container Migration
-**Status:** Planned | **Plan:** [DI_CONTAINER_MIGRATION_PLAN.md](./backlog/sprint-12/DI_CONTAINER_MIGRATION_PLAN.md)
-
-Autofac, Unity, Ninject, StructureMap → Microsoft.Extensions.DependencyInjection
-
-| Sprint | Tasks | Focus |
-|--------|-------|-------|
-| 13 | 12 | Foundation models, Autofac analysis |
-| 14 | 12 | Unity, Ninject, StructureMap analysis |
-| 15 | 10 | Transformation & generation |
-| 16 | 10 | Advanced scenarios, polish |
-
-**Business Value:** High - Most legacy MVC5 apps use third-party DI containers
-
----
-
-### Sprint 17-18: Razor Views Migration
-**Status:** Gap Identified | **Plan:** [RAZOR_VIEWS_PLAN.md](./backlog/sprint-17-18/RAZOR_VIEWS_PLAN.md)
+### Sprint 17-18: Razor Views Migration ✅ COMPLETE
+**Status:** ✅ Complete | **Plan:** [RAZOR_VIEWS_PLAN.md](./backlog/sprint-17-18/RAZOR_VIEWS_PLAN.md)
 
 Transform MVC5 Razor views to ASP.NET Core Razor syntax
 
-| Feature | Confidence | Description |
-|---------|-----------|-------------|
-| Html.ActionLink → asp-action | 95% | Tag helper replacement |
-| Html.BeginForm → form tag helper | 95% | Form tag helper |
-| Html.EditorFor → asp-for | 90% | Input tag helpers |
-| Html.ValidationSummary → asp-validation | 90% | Validation tag helpers |
-| Bundling references → wwwroot | 85% | Script/link tag updates |
-| _ViewStart.cshtml → _ViewImports | 95% | View configuration |
-| @Scripts.Render/@Styles.Render | 80% | Bundle reference removal |
+| Feature | Confidence | Status |
+|---------|-----------|--------|
+| Html.ActionLink → asp-action | 95% | ✅ |
+| Html.BeginForm → form tag helper | 95% | ✅ |
+| Html.EditorFor → asp-for | 90% | ✅ |
+| Html.ValidationSummary → asp-validation | 90% | ✅ |
+| Bundling references → wwwroot | 85% | ✅ |
+| @Scripts.Render/@Styles.Render | 80% | ✅ |
 
-**Business Value:** Critical - Every MVC app has Razor views, currently not migrated!
+**Added:** 75 unit tests (46 transformer + 29 analyzer)
 
 ---
 
-### Sprint 19: Static Files & wwwroot Migration
-**Status:** Gap Identified | **Plan:** [STATIC_FILES_PLAN.md](./backlog/sprint-19/STATIC_FILES_PLAN.md)
+### Sprint 19: Static Files & wwwroot Migration ✅ COMPLETE
+**Status:** ✅ Complete | **Plan:** [STATIC_FILES_PLAN.md](./backlog/sprint-19/STATIC_FILES_PLAN.md)
 
 Migrate Content/Scripts folders to wwwroot structure
 
-| Feature | Confidence | Description |
-|---------|-----------|-------------|
-| Content → wwwroot/css | 95% | CSS file relocation |
-| Scripts → wwwroot/js | 95% | JS file relocation |
-| Images → wwwroot/images | 95% | Image relocation |
-| Static file middleware | 100% | Program.cs configuration |
-| Path references | 85% | Update ~/Content to ~/css |
+| Feature | Confidence | Status |
+|---------|-----------|--------|
+| Content → wwwroot/css | 95% | ✅ |
+| Scripts → wwwroot/js | 95% | ✅ |
+| Images → wwwroot/images | 95% | ✅ |
+| Static file middleware | 100% | ✅ |
+| Path references | 85% | ✅ |
 
-**Business Value:** Critical - All web apps need static file serving in .NET Core
+**Added:** 32 unit tests for static files analyzer
+
+---
+
+### Sprint 13-16: DI Container Migration 🔄 IN PROGRESS
+**Status:** Foundation Complete | **Plan:** [DI_CONTAINER_MIGRATION_PLAN.md](./backlog/sprint-12/DI_CONTAINER_MIGRATION_PLAN.md)
+
+Autofac, Unity, Ninject, StructureMap → Microsoft.Extensions.DependencyInjection
+
+| Component | Status |
+|-----------|--------|
+| DIContainerModels | ✅ |
+| DI Interfaces (6) | ✅ |
+| di-lifetime-mappings.yml | ✅ |
+| DIContainerDetector | ✅ |
+| LifetimeMapper | ✅ |
+| AutofacAnalyzer | ✅ |
+| UnityAnalyzer | 📋 |
+| NinjectAnalyzer | 📋 |
+| StructureMapAnalyzer | 📋 |
+| DIContainerTransformer | 📋 |
+
+**Business Value:** High - Most legacy MVC5 apps use third-party DI containers
 
 ---
 
@@ -195,28 +200,27 @@ Rare, low priority
 | MVC Controllers | ✅ Complete | None |
 | Entity Framework | ✅ Complete | None |
 | WCF Services | ✅ Complete | None |
-| SignalR | ✅ 95% Complete | Minor (DI reg) |
+| SignalR | ✅ Complete | None |
 | Modernization (CQRS, etc.) | ✅ Complete | None |
-| **Razor Views** | ❌ Not Started | **Critical** |
-| **Static Files/wwwroot** | ❌ Not Started | **Critical** |
-| DI Containers | 📋 Planned | Detailed plan exists |
-| HTTP Modules | ❌ Not Started | High |
-| Caching | ❌ Not Started | High |
-| Background Services | ❌ Not Started | Medium |
-| JavaScript | ❌ Not Started | Medium |
-| Testing | ❌ Not Started | Low |
-| Localization | ❌ Not Started | Low |
+| **Razor Views** | ✅ Complete | None |
+| **Static Files/wwwroot** | ✅ Complete | None |
+| DI Containers | 🔄 In Progress | Foundation done |
+| HTTP Modules | 📋 Planned | High |
+| Caching | 📋 Planned | High |
+| Background Services | 📋 Planned | Medium |
+| JavaScript | 📋 Planned | Medium |
+| Testing | 📋 Planned | Low |
+| Localization | 📋 Planned | Low |
 
 ---
 
 ## Recommended Implementation Order
 
-1. **Now:** Finish SignalR DI Registration (Sprint 12)
-2. **Next:** Razor Views Migration (Sprint 17-18) - Critical gap!
-3. **Next:** Static Files/wwwroot (Sprint 19) - Critical gap!
-4. **Then:** DI Container Migration (Sprint 13-16) - High value
-5. **Then:** HTTP Modules (Sprint 20) - High value
-6. **Later:** Caching, Background Services, JavaScript
+1. ✅ Razor Views Migration (Sprint 17-18) - DONE
+2. ✅ Static Files/wwwroot (Sprint 19) - DONE
+3. 🔄 DI Container Migration (Sprint 13-16) - IN PROGRESS
+4. **Next:** HTTP Modules (Sprint 20) - High value
+5. **Later:** Caching, Background Services, JavaScript
 
 ---
 
