@@ -24,6 +24,9 @@ using NetLift.Transforms.Modernization.Analyzers;
 using NetLift.Transforms.Modernization.Generators;
 using NetLift.Transforms.Modernization.Transformers;
 using NetLift.Core.Interfaces.Modernization;
+using NetLift.Core.Interfaces.Razor;
+using NetLift.Transforms.Razor.Analyzers;
+using NetLift.Transforms.Razor.Transformers;
 using NetLift.Validation;
 using Spectre.Console.Cli;
 
@@ -71,6 +74,10 @@ services.AddSingleton<IBundleConfigParser, BundleConfigParser>();
 services.AddSingleton<IAreaMigrationTransformer, AreaMigrationTransformer>();
 services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
 services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
+
+// Register Razor analyzers and transformers
+services.AddSingleton<IRazorViewAnalyzer, RazorViewAnalyzer>();
+services.AddSingleton<IRazorViewTransformer, RazorViewTransformer>();
 
 // Register WCF parsers, analyzers, and generators
 services.AddSingleton<IWcfServiceParser, WcfServiceParser>();
