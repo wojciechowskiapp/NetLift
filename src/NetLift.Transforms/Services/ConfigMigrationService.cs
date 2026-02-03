@@ -53,24 +53,18 @@ public sealed class ConfigMigrationService : IConfigMigrationService
 
         try
         {
-            // Find web.config
-            var webConfigPath = Path.Combine(projectDirectory, "web.config");
-            if (!File.Exists(webConfigPath))
+            // Find web.config (case-insensitive for Linux compatibility)
+            var webConfigPath = FindWebConfigCaseInsensitive(projectDirectory);
+            if (webConfigPath == null)
             {
-                // Try case-insensitive search
-                var files = Directory.GetFiles(projectDirectory, "web.config", SearchOption.TopDirectoryOnly);
-                if (files.Length == 0)
+                diagnostics.Add("web.config not found in project directory. Configuration migration skipped.");
+                return new ConfigMigrationResult
                 {
-                    diagnostics.Add("web.config not found in project directory. Configuration migration skipped.");
-                    return new ConfigMigrationResult
-                    {
-                        Success = true,
-                        GeneratedFiles = generatedFiles,
-                        Diagnostics = diagnostics,
-                        Confidence = 100
-                    };
-                }
-                webConfigPath = files[0];
+                    Success = true,
+                    GeneratedFiles = generatedFiles,
+                    Diagnostics = diagnostics,
+                    Confidence = 100
+                };
             }
 
             // Load and parse web.config
@@ -217,6 +211,33 @@ public sealed class ConfigMigrationService : IConfigMigrationService
     {
         var content = await File.ReadAllTextAsync(path, cancellationToken);
         return XDocument.Parse(content);
+    }
+
+    /// <summary>
+    /// Finds web.config with case-insensitive search for Linux compatibility.
+    /// </summary>
+    private static string? FindWebConfigCaseInsensitive(string projectDirectory)
+    {
+        // First try exact matches
+        var exactPath = Path.Combine(projectDirectory, "web.config");
+        if (File.Exists(exactPath))
+            return exactPath;
+
+        exactPath = Path.Combine(projectDirectory, "Web.config");
+        if (File.Exists(exactPath))
+            return exactPath;
+
+        // Fall back to case-insensitive enumeration
+        try
+        {
+            var files = Directory.GetFiles(projectDirectory, "*", SearchOption.TopDirectoryOnly);
+            return files.FirstOrDefault(f =>
+                Path.GetFileName(f).Equals("web.config", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static async Task<XDocument?> TryLoadTransformAsync(

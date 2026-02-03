@@ -179,7 +179,8 @@ public class OldFormatProjectParserTests
 
         var homeController = result.CompileItems.FirstOrDefault(c => c.Include.Contains("HomeController.cs"));
         homeController.Should().NotBeNull();
-        homeController!.Include.Should().Be("Controllers\\HomeController.cs");
+        // Use platform-independent path for cross-platform compatibility
+        homeController!.Include.Should().Be(Path.Combine("Controllers", "HomeController.cs"));
     }
 
     [Fact]
@@ -217,11 +218,12 @@ public class OldFormatProjectParserTests
         var viewFiles = result.ContentItems.Where(c => c.Include.EndsWith(".cshtml")).ToList();
         viewFiles.Should().NotBeEmpty();
 
+        // Use platform-independent paths for cross-platform compatibility
         var expectedViews = new[]
         {
-            "Views\\_ViewStart.cshtml",
-            "Views\\Shared\\_Layout.cshtml",
-            "Views\\Home\\Index.cshtml"
+            Path.Combine("Views", "_ViewStart.cshtml"),
+            Path.Combine("Views", "Shared", "_Layout.cshtml"),
+            Path.Combine("Views", "Home", "Index.cshtml")
         };
 
         foreach (var expectedView in expectedViews)

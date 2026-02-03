@@ -430,15 +430,10 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         List<MigrationDiagnostic> diagnostics,
         CancellationToken cancellationToken)
     {
-        var webConfigPath = Path.Combine(projectDir, "web.config");
+        // Find web.config with case-insensitive search for Linux compatibility
+        var webConfigPath = FindWebConfigCaseInsensitive(projectDir);
 
-        if (!File.Exists(webConfigPath))
-        {
-            // Try lowercase
-            webConfigPath = Path.Combine(projectDir, "Web.config");
-        }
-
-        if (File.Exists(webConfigPath))
+        if (webConfigPath != null)
         {
             try
             {
@@ -499,6 +494,33 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 Message = "No web.config found, skipping configuration migration",
                 FilePath = projectDir
             });
+        }
+    }
+
+    /// <summary>
+    /// Finds web.config with case-insensitive search for Linux compatibility.
+    /// </summary>
+    private static string? FindWebConfigCaseInsensitive(string projectDirectory)
+    {
+        // First try exact matches
+        var exactPath = Path.Combine(projectDirectory, "web.config");
+        if (File.Exists(exactPath))
+            return exactPath;
+
+        exactPath = Path.Combine(projectDirectory, "Web.config");
+        if (File.Exists(exactPath))
+            return exactPath;
+
+        // Fall back to case-insensitive enumeration
+        try
+        {
+            var files = Directory.GetFiles(projectDirectory, "*", SearchOption.TopDirectoryOnly);
+            return files.FirstOrDefault(f =>
+                Path.GetFileName(f).Equals("web.config", StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return null;
         }
     }
 
