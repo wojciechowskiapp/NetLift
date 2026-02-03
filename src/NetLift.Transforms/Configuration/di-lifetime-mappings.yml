@@ -1,0 +1,175 @@
+# DI Container Lifetime Mappings
+# Maps legacy DI framework lifetimes to Microsoft.Extensions.DependencyInjection.ServiceLifetime
+
+autofac:
+  - source: "SingleInstance"
+    target: "Singleton"
+    confidence: 100
+  - source: "InstancePerLifetimeScope"
+    target: "Scoped"
+    confidence: 100
+  - source: "InstancePerDependency"
+    target: "Transient"
+    confidence: 100
+  - source: "InstancePerRequest"
+    target: "Scoped"
+    confidence: 95
+    notes: "HTTP request scope maps to scoped lifetime"
+  - source: "InstancePerMatchingLifetimeScope"
+    target: "Scoped"
+    confidence: 80
+    notes: "Named scope, may need manual review"
+  - source: "InstancePerOwned"
+    target: "Scoped"
+    confidence: 75
+    notes: "Owned<T> pattern, may need manual review"
+  - source: "ExternallyOwned"
+    target: "Transient"
+    confidence: 70
+    notes: "External disposal, ensure proper cleanup"
+
+unity:
+  - source: "ContainerControlledLifetimeManager"
+    target: "Singleton"
+    confidence: 100
+  - source: "HierarchicalLifetimeManager"
+    target: "Scoped"
+    confidence: 100
+  - source: "TransientLifetimeManager"
+    target: "Transient"
+    confidence: 100
+  - source: "PerRequestLifetimeManager"
+    target: "Scoped"
+    confidence: 95
+    notes: "HTTP request scope maps to scoped lifetime"
+  - source: "PerResolveLifetimeManager"
+    target: "Scoped"
+    confidence: 85
+    notes: "Per resolve, similar to scoped"
+  - source: "PerThreadLifetimeManager"
+    target: "Scoped"
+    confidence: 75
+    notes: "Thread scope has no direct equivalent, using scoped"
+  - source: "ExternallyControlledLifetimeManager"
+    target: "Singleton"
+    confidence: 70
+    notes: "Weak reference singleton, may need manual review"
+
+ninject:
+  - source: "InSingletonScope"
+    target: "Singleton"
+    confidence: 100
+  - source: "InRequestScope"
+    target: "Scoped"
+    confidence: 100
+  - source: "InTransientScope"
+    target: "Transient"
+    confidence: 100
+  - source: "InThreadScope"
+    target: "Scoped"
+    confidence: 75
+    notes: "Thread scope has no direct equivalent, using scoped"
+  - source: "InScope"
+    target: "Scoped"
+    confidence: 70
+    notes: "Custom scope, needs manual review"
+  - source: "InNamedScope"
+    target: "Scoped"
+    confidence: 70
+    notes: "Named scope, needs manual review"
+
+structuremap:
+  - source: "Singleton"
+    target: "Singleton"
+    confidence: 100
+  - source: "ContainerScoped"
+    target: "Scoped"
+    confidence: 100
+  - source: "AlwaysUnique"
+    target: "Transient"
+    confidence: 100
+  - source: "Unique"
+    target: "Transient"
+    confidence: 100
+  - source: "HttpContextScoped"
+    target: "Scoped"
+    confidence: 95
+    notes: "HTTP context scope maps to scoped"
+  - source: "ThreadLocalStorage"
+    target: "Scoped"
+    confidence: 75
+    notes: "Thread local storage, using scoped"
+  - source: "Hybrid"
+    target: "Scoped"
+    confidence: 60
+    notes: "Hybrid scope, needs manual review"
+
+# Default mapping when lifetime cannot be determined
+default:
+  target: "Scoped"
+  confidence: 50
+  notes: "Unknown lifetime, defaulting to scoped - needs review"
+
+# Package detection patterns for each framework
+packages:
+  autofac:
+    - "Autofac"
+    - "Autofac.Mvc5"
+    - "Autofac.WebApi2"
+    - "Autofac.Integration.Mvc"
+    - "Autofac.Integration.WebApi"
+    - "Autofac.Integration.Owin"
+
+  unity:
+    - "Unity"
+    - "Unity.Container"
+    - "Unity.Mvc5"
+    - "Unity.AspNet.WebApi"
+    - "Unity.WebAPI"
+    - "Unity.Interception"
+
+  ninject:
+    - "Ninject"
+    - "Ninject.Web.Mvc"
+    - "Ninject.Web.WebApi"
+    - "Ninject.MVC5"
+    - "Ninject.Web.Common"
+    - "Ninject.Web.Common.WebHost"
+
+  structuremap:
+    - "StructureMap"
+    - "StructureMap.MVC5"
+    - "StructureMap.WebApi2"
+    - "StructureMap.Web"
+
+# Packages to remove after migration
+packages_to_remove:
+  - "Autofac"
+  - "Autofac.Mvc5"
+  - "Autofac.WebApi2"
+  - "Autofac.Integration.Mvc"
+  - "Autofac.Integration.WebApi"
+  - "Autofac.Integration.Owin"
+  - "Unity"
+  - "Unity.Container"
+  - "Unity.Mvc5"
+  - "Unity.AspNet.WebApi"
+  - "Unity.WebAPI"
+  - "Unity.Interception"
+  - "Ninject"
+  - "Ninject.Web.Mvc"
+  - "Ninject.Web.WebApi"
+  - "Ninject.MVC5"
+  - "Ninject.Web.Common"
+  - "Ninject.Web.Common.WebHost"
+  - "StructureMap"
+  - "StructureMap.MVC5"
+  - "StructureMap.WebApi2"
+  - "StructureMap.Web"
+
+# Optional packages to add
+packages_to_add:
+  scrutor:
+    name: "Scrutor"
+    version: "4.2.2"
+    when: "Assembly scanning or decorators detected"
