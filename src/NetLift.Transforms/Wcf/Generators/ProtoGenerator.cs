@@ -1,5 +1,7 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
 using NetLift.Core.Models.Wcf;
 
@@ -235,19 +237,18 @@ public sealed class ProtoGenerator : IProtoGenerator
 
     private string MapTypeNameToProto(string typeName, bool isArray, bool isNullable, HashSet<string> imports)
     {
-        // Handle generic types (e.g., List<T>)
+        // Handle generic types (e.g., List<T>, Dictionary<K,V>) using Roslyn
         if (typeName.Contains('<'))
         {
-            var match = Regex.Match(typeName, @"^(?:List|IList|IEnumerable|ICollection)<(.+)>$");
-            if (match.Success)
+            var (isCollection, elementType) = ParseGenericType(typeName);
+            if (isCollection)
             {
-                var innerType = match.Groups[1].Value;
-                var innerProtoType = MapTypeNameToProto(innerType, false, false, imports);
-                return $"repeated {innerProtoType}";
+                var elementProtoType = MapTypeNameToProto(elementType, false, false, imports);
+                return $"repeated {elementProtoType}";
             }
         }
 
-        // Handle arrays
+        // Handle arrays (e.g., int[], string[])
         if (isArray || typeName.EndsWith("[]"))
         {
             var elementType = typeName.TrimEnd('[', ']');
@@ -443,5 +444,54 @@ public sealed class ProtoGenerator : IProtoGenerator
 
         // Convert to snake_case first, then uppercase
         return ToSnakeCase(input).ToUpperInvariant();
+    }
+
+    /// <summary>
+    /// Parses a type name using Roslyn to detect generic collections.
+    /// Handles nested generics and multiple type arguments correctly.
+    /// </summary>
+    /// <param name="typeName">The type name to parse (e.g., "List&lt;string&gt;", "Dictionary&lt;int, List&lt;string&gt;&gt;")</param>
+    /// <returns>A tuple indicating if it's a collection and the element type if applicable</returns>
+    private static (bool IsCollection, string ElementType) ParseGenericType(string typeName)
+    {
+        try
+        {
+            var type = SyntaxFactory.ParseTypeName(typeName);
+
+            if (type is GenericNameSyntax genericName)
+            {
+                var name = genericName.Identifier.Text;
+                var isCollection = name is "List" or "IList" or "IEnumerable" or "ICollection"
+                                  or "IReadOnlyList" or "IReadOnlyCollection";
+
+                if (isCollection && genericName.TypeArgumentList.Arguments.Count == 1)
+                {
+                    var elementType = genericName.TypeArgumentList.Arguments[0].ToString();
+                    return (true, elementType);
+                }
+
+                // Handle qualified names like System.Collections.Generic.List<T>
+                if (!isCollection && type is QualifiedNameSyntax qualifiedName &&
+                    qualifiedName.Right is GenericNameSyntax rightGeneric)
+                {
+                    var rightName = rightGeneric.Identifier.Text;
+                    var rightIsCollection = rightName is "List" or "IList" or "IEnumerable" or "ICollection"
+                                           or "IReadOnlyList" or "IReadOnlyCollection";
+
+                    if (rightIsCollection && rightGeneric.TypeArgumentList.Arguments.Count == 1)
+                    {
+                        var elementType = rightGeneric.TypeArgumentList.Arguments[0].ToString();
+                        return (true, elementType);
+                    }
+                }
+            }
+
+            return (false, typeName);
+        }
+        catch
+        {
+            // If parsing fails, fall back to non-collection
+            return (false, typeName);
+        }
     }
 }

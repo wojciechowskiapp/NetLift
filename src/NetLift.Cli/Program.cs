@@ -24,6 +24,20 @@ using NetLift.Transforms.Modernization.Analyzers;
 using NetLift.Transforms.Modernization.Generators;
 using NetLift.Transforms.Modernization.Transformers;
 using NetLift.Core.Interfaces.Modernization;
+using NetLift.Core.Interfaces.Razor;
+using NetLift.Core.Interfaces.StaticFiles;
+using NetLift.Core.Interfaces.SignalR;
+using NetLift.Core.Interfaces.DependencyInjection;
+using NetLift.Transforms.Razor.Analyzers;
+using NetLift.Transforms.Razor.Transformers;
+using NetLift.Transforms.StaticFiles.Analyzers;
+using NetLift.Transforms.StaticFiles.Migrators;
+using NetLift.Transforms.SignalR.Analyzers;
+using NetLift.Transforms.SignalR.Transformers;
+using NetLift.Transforms.SignalR.Generators;
+using NetLift.Transforms.DependencyInjection.Detectors;
+using NetLift.Transforms.DependencyInjection.Mappers;
+using NetLift.Transforms.DependencyInjection.Analyzers;
 using NetLift.Validation;
 using Spectre.Console.Cli;
 
@@ -72,6 +86,25 @@ services.AddSingleton<IAreaMigrationTransformer, AreaMigrationTransformer>();
 services.AddSingleton<IAssetReferenceTransformer, AssetReferenceTransformer>();
 services.AddSingleton<IRazorNamespaceTransformer, RazorNamespaceTransformer>();
 
+// Register Razor analyzers and transformers
+services.AddSingleton<IRazorViewAnalyzer, RazorViewAnalyzer>();
+services.AddSingleton<IRazorViewTransformer, RazorViewTransformer>();
+
+// Register Static Files analyzers and migrators
+services.AddSingleton<IStaticFilesAnalyzer, StaticFilesAnalyzer>();
+services.AddSingleton<IStaticFilesMigrator, StaticFilesMigrator>();
+
+// Register SignalR analyzers, transformers, and generators
+services.AddSingleton<ISignalRHubAnalyzer, SignalRHubAnalyzer>();
+services.AddSingleton<ISignalRHubTransformer, SignalRHubTransformer>();
+services.AddSingleton<ISignalRStartupGenerator, SignalRStartupGenerator>();
+services.AddSingleton<IGlobalHostAnalyzer, GlobalHostAnalyzer>();
+
+// Register DI Container analyzers, detectors, and mappers
+services.AddSingleton<IDIContainerDetector, DIContainerDetector>();
+services.AddSingleton<ILifetimeMapper, LifetimeMapper>();
+services.AddSingleton<IDIContainerAnalyzer, AutofacAnalyzer>();
+
 // Register WCF parsers, analyzers, and generators
 services.AddSingleton<IWcfServiceParser, WcfServiceParser>();
 services.AddSingleton<IWcfDataContractParser, WcfDataContractParser>();
@@ -109,6 +142,7 @@ services.AddSingleton<ICommandGenerator, CommandGenerator>();
 services.AddSingleton<IQueryGenerator, QueryGenerator>();
 services.AddSingleton<IHandlerGenerator, HandlerGenerator>();
 services.AddSingleton<IValidatorGenerator, ValidatorGenerator>();
+services.AddSingleton<IInfrastructureGenerator, InfrastructureGenerator>();
 
 // Register report generators
 services.AddSingleton<IHtmlReportGenerator, HtmlReportGenerator>();

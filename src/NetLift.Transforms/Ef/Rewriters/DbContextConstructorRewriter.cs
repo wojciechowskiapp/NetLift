@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
+using NetLift.Transforms.Common;
 
 namespace NetLift.Transforms.Ef.Rewriters;
 
@@ -56,7 +57,10 @@ public sealed class DbContextConstructorRewriter : CSharpSyntaxRewriter, IDbCont
         }
 
         // Add new using directives
-        rewritten = AddRequiredUsings(rewritten);
+        if (rewritten is CompilationUnitSyntax compilationUnit)
+        {
+            rewritten = compilationUnit.AddRequiredUsings(_requiredUsings);
+        }
 
         return rewritten.ToFullString();
     }
@@ -109,13 +113,19 @@ public sealed class DbContextConstructorRewriter : CSharpSyntaxRewriter, IDbCont
         var className = node.Identifier.Text;
         var constructors = node.Members.OfType<ConstructorDeclarationSyntax>().ToList();
 
-        // If no constructors, no transformation needed (will use default constructor)
+        // If no constructors, ADD the EF Core constructor for DI support
         if (constructors.Count == 0)
         {
+            _requiredUsings.Add("Microsoft.EntityFrameworkCore");
+            _lowestConfidence = Math.Min(_lowestConfidence, 95);
             _diagnostics.Add(new RewriterDiagnostic(
-                $"DbContext {className} has no explicit constructors - no transformation needed",
+                $"DbContext {className} has no explicit constructors - adding EF Core constructor for DI support",
                 RewriterDiagnosticSeverity.Info));
-            return node;
+
+            // Add the EF Core constructor
+            var newConstructor = CreateEfCoreConstructor(className, null, false);
+            var newMembers = node.Members.Insert(0, newConstructor);
+            return node.WithMembers(newMembers);
         }
 
         // Handle multiple constructors
@@ -275,7 +285,14 @@ public sealed class DbContextConstructorRewriter : CSharpSyntaxRewriter, IDbCont
         var constructorRoot = constructorTree.GetRoot();
         var constructor = constructorRoot.DescendantNodes()
             .OfType<ConstructorDeclarationSyntax>()
-            .First()
+            .FirstOrDefault();
+
+        if (constructor is null)
+        {
+            throw new InvalidOperationException($"Failed to parse EF Core constructor for {className}");
+        }
+
+        constructor = constructor
             .WithLeadingTrivia(SyntaxFactory.EndOfLine("\n"), SyntaxFactory.Whitespace("    "))
             .WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
 
@@ -413,50 +430,42 @@ public sealed class DbContextConstructorRewriter : CSharpSyntaxRewriter, IDbCont
                 .WithTriviaFrom(visited);
         }
 
-        // Rename PluralizingTableNameConvention → (removed - EF Core doesn't have this)
-        // Note: This is handled by removing the convention code, not renaming
-
         return visited;
     }
 
     /// <summary>
-    /// Adds required using directives that were identified during rewriting.
+    /// Visits expression statements to detect and remove EF6 Conventions.Remove calls.
     /// </summary>
-    private SyntaxNode AddRequiredUsings(SyntaxNode root)
+    public override SyntaxNode? VisitExpressionStatement(ExpressionStatementSyntax node)
     {
-        if (_requiredUsings.Count == 0)
+        // Check for modelBuilder.Conventions.Remove<...>() calls
+        if (node.Expression is InvocationExpressionSyntax invocation &&
+            invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
+            memberAccess.Name.Identifier.Text == "Remove" &&
+            memberAccess.Expression is MemberAccessExpressionSyntax parentAccess &&
+            parentAccess.Name.Identifier.Text == "Conventions")
         {
-            return root;
+            // Get the type argument (e.g., PluralizingTableNameConvention)
+            var typeArg = memberAccess.Name is GenericNameSyntax genericName
+                ? genericName.TypeArgumentList.Arguments.FirstOrDefault()?.ToString() ?? "Convention"
+                : "Convention";
+
+            // Replace with a comment
+            _lowestConfidence = Math.Min(_lowestConfidence, 85);
+            _diagnostics.Add(new RewriterDiagnostic(
+                $"Removed modelBuilder.Conventions.Remove<{typeArg}>() - EF Core doesn't use the same convention system",
+                RewriterDiagnosticSeverity.Warning));
+
+            // Return an empty statement with a TODO comment
+            var leadingTrivia = node.GetLeadingTrivia();
+            var comment = SyntaxFactory.Comment($"// TODO: EF6 Conventions.Remove<{typeArg}>() removed - EF Core uses different model configuration");
+            var emptyStatement = SyntaxFactory.EmptyStatement()
+                .WithLeadingTrivia(leadingTrivia.Add(comment).Add(SyntaxFactory.EndOfLine("\n")));
+
+            return emptyStatement;
         }
 
-        if (root is CompilationUnitSyntax compilationUnit)
-        {
-            var existingUsings = compilationUnit.Usings
-                .Select(u => u.Name?.ToString())
-                .Where(n => n != null)
-                .ToHashSet(StringComparer.Ordinal);
-
-            var newUsings = _requiredUsings
-                .Where(ns => !existingUsings.Contains(ns) && !string.IsNullOrWhiteSpace(ns))
-                .Select(ns =>
-                {
-                    // Parse complete using directive to ensure proper spacing
-                    var usingCode = $"using {ns};";
-                    var usingTree = CSharpSyntaxTree.ParseText(usingCode);
-                    var parsedUsing = usingTree.GetRoot()
-                        .DescendantNodes()
-                        .OfType<UsingDirectiveSyntax>()
-                        .First();
-                    return parsedUsing.WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
-                })
-                .ToList();
-
-            if (newUsings.Count > 0)
-            {
-                return compilationUnit.AddUsings(newUsings.ToArray());
-            }
-        }
-
-        return root;
+        return base.VisitExpressionStatement(node);
     }
+
 }

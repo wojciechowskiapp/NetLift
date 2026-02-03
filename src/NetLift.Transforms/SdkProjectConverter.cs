@@ -210,6 +210,10 @@ public class SdkProjectConverter : ISdkProjectConverter
         // TargetFramework (required)
         propertyGroup.Add(new XElement("TargetFramework", targetFramework));
 
+        // Enable modern .NET 8+ features
+        propertyGroup.Add(new XElement("ImplicitUsings", "enable"));
+        propertyGroup.Add(new XElement("Nullable", "enable"));
+
         // OutputType (only if not Library, which is default)
         if (!string.IsNullOrEmpty(projectInfo.OutputType) &&
             !projectInfo.OutputType.Equals("Library", StringComparison.OrdinalIgnoreCase))

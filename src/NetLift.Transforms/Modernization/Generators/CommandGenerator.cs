@@ -1,17 +1,33 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces.Modernization;
 using NetLift.Core.Models.Modernization;
+using NetLift.Transforms.Modernization.Processors;
+using NetLift.Transforms.Modernization.Utilities;
+using System;
+using System.Linq;
 using System.Text;
 
 namespace NetLift.Transforms.Modernization.Generators;
 
 /// <summary>
-/// Generates CQRS Command and CommandHandler classes from controller actions.
+/// Generates production-ready CQRS Command and CommandHandler classes from controller actions.
+/// Includes logging, mapping, audit trails, and proper error handling.
 /// </summary>
 public sealed class CommandGenerator : ICommandGenerator
 {
     private const string Indent = "    ";
     private const string DoubleIndent = "        ";
     private const string TripleIndent = "            ";
+    private const string QuadIndent = "                ";
+
+    /// <summary>
+    /// Options for command generation.
+    /// </summary>
+    public bool IncludeLogger { get; set; } = true;
+    public bool IncludeAuditTrail { get; set; } = true;
+    public bool IncludeConfigureAwait { get; set; } = true;
 
     /// <summary>
     /// Generates a Command class for an action.
@@ -22,26 +38,52 @@ public sealed class CommandGenerator : ICommandGenerator
     {
         ArgumentNullException.ThrowIfNull(commandInfo);
 
+        // Determine if async based on IsAsync flag OR if business logic contains async method calls
+        // This must be done BEFORE processing to ensure EnsureAsyncAwait is called
+        var needsAsync = commandInfo.IsAsync || CqrsGeneratorHelpers.HasAsyncMethodCalls(commandInfo.BusinessLogic ?? string.Empty);
+
+        // Process business logic first to detect dependencies and fix issues
+        var processedLogic = BusinessLogicProcessor.Process(commandInfo.BusinessLogic, needsAsync);
+
         var sb = new StringBuilder();
 
         // Add namespace
         sb.AppendLine($"namespace {commandInfo.Namespace};");
         sb.AppendLine();
 
-        // Add usings (using lightweight MediatR replacement)
+        // Add usings (production-ready handlers)
         sb.AppendLine("using System.Collections.Generic;");
         sb.AppendLine("using System.Threading;");
         sb.AppendLine("using System.Threading.Tasks;");
-        // Add Result, IApplicationDbContext, and Models usings
-        var rootNamespace = ExtractRootNamespace(commandInfo.Namespace);
+
+        // Add core usings
+        var rootNamespace = CqrsGeneratorHelpers.ExtractRootNamespace(commandInfo.Namespace);
         sb.AppendLine($"using {rootNamespace}.Application.Common;");
         sb.AppendLine($"using {rootNamespace}.Application.Common.Interfaces;");
         sb.AppendLine($"using {rootNamespace}.Models;");
+
+        // Add production feature usings
+        if (IncludeLogger)
+        {
+            sb.AppendLine("using Microsoft.Extensions.Logging;");
+        }
 
         // Add Microsoft.AspNetCore.Mvc.Rendering if ViewBag mutations exist (for SelectListItem)
         if (commandInfo.ViewModelMutations?.Any() == true)
         {
             sb.AppendLine("using Microsoft.AspNetCore.Mvc.Rendering;");
+        }
+
+        // Add Microsoft.AspNetCore.Http if any property uses ASP.NET Core Http types
+        if (CqrsGeneratorHelpers.RequiresAspNetCoreHttpUsing(commandInfo))
+        {
+            sb.AppendLine("using Microsoft.AspNetCore.Http;");
+        }
+
+        // Add usings detected from business logic
+        foreach (var requiredUsing in processedLogic.RequiredUsings)
+        {
+            sb.AppendLine($"using {requiredUsing};");
         }
 
         sb.AppendLine();
@@ -53,124 +95,17 @@ public sealed class CommandGenerator : ICommandGenerator
         // Generate Response DTO if ViewBag mutations exist
         if (commandInfo.ViewModelMutations?.Any() == true)
         {
-            GenerateResponseDto(sb, commandInfo);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
+            CqrsGeneratorHelpers.GenerateResponseDto(sb, entityName, commandInfo.Name, commandInfo.ViewModelMutations);
             sb.AppendLine();
         }
 
         // Generate Handler in same file
-        GenerateHandlerClass(sb, commandInfo);
+        GenerateHandlerClass(sb, commandInfo, processedLogic);
 
         return sb.ToString();
     }
 
-    /// <summary>
-    /// Generates a response DTO record from ViewBag mutations.
-    /// </summary>
-    private void GenerateResponseDto(StringBuilder sb, CommandInfo commandInfo)
-    {
-        var entityName = ExtractEntityName(commandInfo.Name);
-        var dtoName = $"{entityName}ResponseDto";
-
-        sb.AppendLine("/// <summary>");
-        sb.AppendLine($"/// Response DTO for {commandInfo.Name} containing ViewBag/ViewData properties.");
-        sb.AppendLine("/// </summary>");
-        sb.AppendLine($"public record {dtoName}");
-        sb.AppendLine("{");
-
-        if (commandInfo.ViewModelMutations != null)
-        {
-            foreach (var mutation in commandInfo.ViewModelMutations)
-            {
-                var propertyType = InferTypeFromAssignedValue(mutation.AssignedValue);
-                sb.AppendLine($"{Indent}/// <summary>");
-                sb.AppendLine($"{Indent}/// Gets or initializes {mutation.PropertyName}.");
-
-                if (propertyType == "object?")
-                {
-                    sb.AppendLine($"{Indent}/// TODO: Review type inference - assigned value: {EscapeXmlComment(mutation.AssignedValue)}");
-                }
-
-                sb.AppendLine($"{Indent}/// </summary>");
-                sb.AppendLine($"{Indent}public {propertyType} {mutation.PropertyName} {{ get; init; }}");
-                sb.AppendLine();
-            }
-        }
-
-        sb.AppendLine("}");
-    }
-
-    /// <summary>
-    /// Infers the C# type from an assigned value expression.
-    /// </summary>
-    private static string InferTypeFromAssignedValue(string assignedValue)
-    {
-        if (string.IsNullOrWhiteSpace(assignedValue))
-            return "object?";
-
-        var trimmed = assignedValue.Trim();
-
-        // SelectList patterns
-        if (trimmed.Contains("new SelectList", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Select(", StringComparison.OrdinalIgnoreCase) && trimmed.Contains("SelectListItem", StringComparison.OrdinalIgnoreCase))
-        {
-            return "IEnumerable<SelectListItem>";
-        }
-
-        // String literal
-        if (trimmed.StartsWith("\"") && trimmed.EndsWith("\""))
-        {
-            return "string";
-        }
-
-        // Numeric literals
-        if (int.TryParse(trimmed, out _))
-        {
-            return "int";
-        }
-
-        if (decimal.TryParse(trimmed, out _) || trimmed.EndsWith("m", StringComparison.OrdinalIgnoreCase))
-        {
-            return "decimal";
-        }
-
-        // Boolean
-        if (trimmed.Equals("true", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Equals("false", StringComparison.OrdinalIgnoreCase))
-        {
-            return "bool";
-        }
-
-        // LINQ query (IEnumerable<T> or List<T>)
-        if (trimmed.Contains(".ToList()", StringComparison.OrdinalIgnoreCase))
-        {
-            return "List<object>"; // TODO: Could be improved with type inference
-        }
-
-        if (trimmed.Contains(".AsEnumerable()", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Where(", StringComparison.OrdinalIgnoreCase) ||
-            trimmed.Contains(".Select(", StringComparison.OrdinalIgnoreCase))
-        {
-            return "IEnumerable<object>"; // TODO: Could be improved with type inference
-        }
-
-        // Default fallback with nullable
-        return "object?";
-    }
-
-    /// <summary>
-    /// Escapes XML comment content to prevent XML parsing issues.
-    /// </summary>
-    private static string EscapeXmlComment(string text)
-    {
-        if (string.IsNullOrEmpty(text))
-            return string.Empty;
-
-        return text
-            .Replace("&", "&amp;")
-            .Replace("<", "&lt;")
-            .Replace(">", "&gt;")
-            .Replace("\"", "&quot;");
-    }
 
     /// <summary>
     /// Generates only the Command record (for backwards compatibility).
@@ -200,8 +135,8 @@ public sealed class CommandGenerator : ICommandGenerator
         {
             // Single property - inline record
             var prop = commandInfo.Properties[0];
-            var propType = FormatPropertyType(prop);
-            var propName = ToPascalCase(prop.Name);
+            var propType = CqrsGeneratorHelpers.FormatPropertyType(prop);
+            var propName = CqrsGeneratorHelpers.ToPascalCase(prop.Name);
             sb.AppendLine($"public record {commandInfo.Name}({propType} {propName}) : IRequest<{commandInfo.ReturnType}>;");
         }
         else
@@ -212,8 +147,8 @@ public sealed class CommandGenerator : ICommandGenerator
             for (int i = 0; i < commandInfo.Properties.Count; i++)
             {
                 var prop = commandInfo.Properties[i];
-                var propType = FormatPropertyType(prop);
-                var propName = ToPascalCase(prop.Name);
+                var propType = CqrsGeneratorHelpers.FormatPropertyType(prop);
+                var propName = CqrsGeneratorHelpers.ToPascalCase(prop.Name);
                 var comma = i < commandInfo.Properties.Count - 1 ? "," : string.Empty;
                 sb.AppendLine($"{Indent}{propType} {propName}{comma}");
             }
@@ -237,7 +172,7 @@ public sealed class CommandGenerator : ICommandGenerator
     /// <summary>
     /// Generates the handler class content (without namespace/usings).
     /// </summary>
-    private void GenerateHandlerClass(StringBuilder sb, CommandInfo commandInfo)
+    private void GenerateHandlerClass(StringBuilder sb, CommandInfo commandInfo, ProcessedBusinessLogic? processedLogic)
     {
         // Add XML documentation
         sb.AppendLine("/// <summary>");
@@ -255,24 +190,106 @@ public sealed class CommandGenerator : ICommandGenerator
         sb.AppendLine($"public sealed class {handlerName} : IRequestHandler<{commandInfo.Name}, {commandInfo.ReturnType}>");
         sb.AppendLine("{");
 
-        // Add dependencies (context field)
+        // Add dependencies (fields)
         sb.AppendLine($"{Indent}private readonly IApplicationDbContext _context;");
+
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{Indent}private readonly ILogger<{handlerName}> _logger;");
+        }
+
+        if (IncludeAuditTrail)
+        {
+            sb.AppendLine($"{Indent}private readonly ICurrentUserService _currentUser;");
+            sb.AppendLine($"{Indent}private readonly IDateTime _dateTime;");
+        }
+
+        // Add detected dependencies from business logic
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                sb.AppendLine($"{Indent}private readonly {dep.InterfaceType} {dep.FieldName};");
+            }
+        }
+
         sb.AppendLine();
 
-        // Add constructor
-        sb.AppendLine($"{Indent}public {handlerName}(IApplicationDbContext context)");
+        // Add constructor with all dependencies
+        sb.Append($"{Indent}public {handlerName}(");
+        var constructorParams = new List<string> { "IApplicationDbContext context" };
+
+        if (IncludeLogger)
+        {
+            constructorParams.Add($"ILogger<{handlerName}> logger");
+        }
+
+        if (IncludeAuditTrail)
+        {
+            constructorParams.Add("ICurrentUserService currentUser");
+            constructorParams.Add("IDateTime dateTime");
+        }
+
+        // Add detected dependencies to constructor
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                constructorParams.Add($"{dep.InterfaceType} {dep.ConstructorParamName}");
+            }
+        }
+
+        if (constructorParams.Count <= 2)
+        {
+            sb.Append(string.Join(", ", constructorParams));
+            sb.AppendLine(")");
+        }
+        else
+        {
+            sb.AppendLine();
+            for (int i = 0; i < constructorParams.Count; i++)
+            {
+                var separator = i < constructorParams.Count - 1 ? "," : ")";
+                sb.AppendLine($"{DoubleIndent}{constructorParams[i]}{separator}");
+            }
+        }
+
         sb.AppendLine($"{Indent}{{");
         sb.AppendLine($"{DoubleIndent}_context = context;");
+
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{DoubleIndent}_logger = logger;");
+        }
+
+        if (IncludeAuditTrail)
+        {
+            sb.AppendLine($"{DoubleIndent}_currentUser = currentUser;");
+            sb.AppendLine($"{DoubleIndent}_dateTime = dateTime;");
+        }
+
+        // Add detected dependency assignments
+        if (processedLogic != null)
+        {
+            foreach (var dep in processedLogic.RequiredDependencies)
+            {
+                sb.AppendLine($"{DoubleIndent}{dep.FieldName} = {dep.ConstructorParamName};");
+            }
+        }
+
         sb.AppendLine($"{Indent}}}");
         sb.AppendLine();
 
-        // Determine if we need async - either from IsAsync flag or if business logic contains await
-        var needsAsync = commandInfo.IsAsync ||
+        // Determine if we need async - either from IsAsync flag, if business logic contains await, or contains *Async calls
+        // Also check processed logic since EnsureAsyncAwait may have added awaits
+        var handlerNeedsAsync = commandInfo.IsAsync ||
             (!string.IsNullOrWhiteSpace(commandInfo.BusinessLogic) &&
-             commandInfo.BusinessLogic.Contains("await ", StringComparison.Ordinal));
+             (commandInfo.BusinessLogic.Contains("await ", StringComparison.Ordinal) ||
+              CqrsGeneratorHelpers.HasAsyncMethodCalls(commandInfo.BusinessLogic))) ||
+            (processedLogic != null && processedLogic.Code.Contains("await ", StringComparison.Ordinal));
 
         // Add Handle method
-        if (needsAsync)
+        if (handlerNeedsAsync)
         {
             sb.AppendLine($"{Indent}public async Task<{commandInfo.ReturnType}> Handle({commandInfo.Name} request, CancellationToken cancellationToken)");
         }
@@ -284,22 +301,22 @@ public sealed class CommandGenerator : ICommandGenerator
         sb.AppendLine($"{Indent}{{");
 
         // Add implementation
-        if (!string.IsNullOrWhiteSpace(commandInfo.BusinessLogic))
+        if (processedLogic != null && !string.IsNullOrWhiteSpace(processedLogic.Code))
         {
-            // Use provided business logic
+            // Use processed business logic
             sb.AppendLine($"{DoubleIndent}// Business logic from {commandInfo.Source.ControllerName}.{commandInfo.Source.ActionName}");
 
             // If ViewBag mutations exist, declare result variable
             if (commandInfo.ViewModelMutations?.Any() == true)
             {
-                var entityName = ExtractEntityName(commandInfo.Name);
+                var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
                 var dtoName = $"{entityName}ResponseDto";
                 sb.AppendLine($"{DoubleIndent}var result = new {dtoName}();");
                 sb.AppendLine();
             }
 
-            // Indent the business logic
-            var logicLines = commandInfo.BusinessLogic.Split('\n', StringSplitOptions.TrimEntries);
+            // Indent the processed business logic
+            var logicLines = processedLogic.Code.Split('\n', StringSplitOptions.TrimEntries);
             foreach (var line in logicLines)
             {
                 if (!string.IsNullOrWhiteSpace(line))
@@ -325,7 +342,7 @@ public sealed class CommandGenerator : ICommandGenerator
                 sb.AppendLine();
 
                 // Extract entity name from command (e.g., "CreateStudent" -> "Student")
-                var entityName = ExtractEntityName(commandInfo.Name);
+                var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
 
                 if (commandInfo.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
                 {
@@ -347,7 +364,59 @@ public sealed class CommandGenerator : ICommandGenerator
         }
 
         sb.AppendLine($"{Indent}}}");
+
+        // Generate private methods that are called from business logic
+        if (commandInfo.PrivateMethods?.Any() == true)
+        {
+            foreach (var privateMethod in commandInfo.PrivateMethods)
+            {
+                sb.AppendLine();
+                GeneratePrivateMethod(sb, privateMethod);
+            }
+        }
+
         sb.AppendLine("}");
+    }
+
+    /// <summary>
+    /// Generates a private method for the handler from a controller's private method.
+    /// Transforms controller-specific patterns to handler patterns.
+    /// </summary>
+    private void GeneratePrivateMethod(StringBuilder sb, NetLift.Core.Models.Modernization.PrivateMethodInfo privateMethod)
+    {
+        // Extract the method body and transform it
+        var methodBody = privateMethod.Body;
+
+        // Transform controller-specific patterns
+        methodBody = TransformPrivateMethodBody(methodBody);
+
+        // Add the method to the handler
+        sb.AppendLine($"{Indent}/// <summary>");
+        sb.AppendLine($"{Indent}/// Private helper method migrated from controller.");
+        sb.AppendLine($"{Indent}/// TODO: Review and adapt as needed for handler context.");
+        sb.AppendLine($"{Indent}/// </summary>");
+        sb.AppendLine($"{Indent}{methodBody}");
+    }
+
+    /// <summary>
+    /// Transforms controller-specific patterns in a private method body to handler patterns.
+    /// Uses Roslyn for accurate parsing and transformation.
+    /// </summary>
+    private static string TransformPrivateMethodBody(string methodBody)
+    {
+        try
+        {
+            var tree = CSharpSyntaxTree.ParseText(methodBody);
+            var root = tree.GetRoot();
+            var rewriter = new PrivateMethodTransformRewriter();
+            var newRoot = rewriter.Visit(root);
+            return newRoot.ToFullString();
+        }
+        catch
+        {
+            // Fallback to original if parsing fails
+            return methodBody;
+        }
     }
 
     private static string GenerateDescription(CommandInfo commandInfo)
@@ -355,17 +424,17 @@ public sealed class CommandGenerator : ICommandGenerator
         // Try to infer description from command name
         if (commandInfo.Name.StartsWith("Create", StringComparison.OrdinalIgnoreCase))
         {
-            var entityName = ExtractEntityName(commandInfo.Name);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
             return $"Command to create a new {entityName}.";
         }
         else if (commandInfo.Name.StartsWith("Update", StringComparison.OrdinalIgnoreCase))
         {
-            var entityName = ExtractEntityName(commandInfo.Name);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
             return $"Command to update an existing {entityName}.";
         }
         else if (commandInfo.Name.StartsWith("Delete", StringComparison.OrdinalIgnoreCase))
         {
-            var entityName = ExtractEntityName(commandInfo.Name);
+            var entityName = CqrsGeneratorHelpers.ExtractEntityName(commandInfo.Name);
             return $"Command to delete a {entityName}.";
         }
 
@@ -383,75 +452,18 @@ public sealed class CommandGenerator : ICommandGenerator
         return $"{commandName}Handler";
     }
 
-    private static string ExtractEntityName(string commandName)
-    {
-        // Remove common prefixes and "Command" suffix
-        var entityName = commandName;
 
-        var prefixes = new[] { "Create", "Update", "Delete", "Upsert", "Add", "Remove", "Edit", "Modify" };
-        foreach (var prefix in prefixes)
+    private void GenerateCreateImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
+    {
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
+        // Add logging at start
+        if (IncludeLogger)
         {
-            if (entityName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            {
-                entityName = entityName[prefix.Length..];
-                break;
-            }
+            sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Creating {entityName}\");");
+            sb.AppendLine();
         }
 
-        if (entityName.EndsWith("Command", StringComparison.OrdinalIgnoreCase))
-        {
-            entityName = entityName[..^7];
-        }
-
-        return string.IsNullOrWhiteSpace(entityName) ? "Entity" : entityName;
-    }
-
-    private static string FormatPropertyType(CommandProperty property)
-    {
-        var type = property.Type;
-
-        // Transform legacy MVC types to modern equivalents
-        type = TransformLegacyType(type);
-
-        if (property.IsNullable && !type.EndsWith("?"))
-        {
-            type += "?";
-        }
-
-        return type;
-    }
-
-    /// <summary>
-    /// Converts a string to PascalCase (first letter uppercase).
-    /// </summary>
-    private static string ToPascalCase(string name)
-    {
-        if (string.IsNullOrEmpty(name))
-            return name;
-        return char.ToUpperInvariant(name[0]) + name.Substring(1);
-    }
-
-    /// <summary>
-    /// Transforms legacy ASP.NET MVC types to ASP.NET Core equivalents.
-    /// </summary>
-    private static string TransformLegacyType(string type)
-    {
-        return type switch
-        {
-            "FormCollection" => "Dictionary<string, string>",
-            "System.Web.Mvc.FormCollection" => "Dictionary<string, string>",
-            "HttpPostedFileBase" => "IFormFile",
-            "System.Web.HttpPostedFileBase" => "IFormFile",
-            "HttpPostedFileBase[]" => "IFormFileCollection",
-            "IEnumerable<HttpPostedFileBase>" => "IFormFileCollection",
-            "SelectList" => "IEnumerable<SelectListItem>",
-            "System.Web.Mvc.SelectList" => "IEnumerable<SelectListItem>",
-            _ => type
-        };
-    }
-
-    private static void GenerateCreateImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
-    {
         sb.AppendLine($"{DoubleIndent}var entity = new {entityName}");
         sb.AppendLine($"{DoubleIndent}{{");
 
@@ -460,13 +472,21 @@ public sealed class CommandGenerator : ICommandGenerator
             sb.AppendLine($"{TripleIndent}{prop.Name} = request.{prop.Name},");
         }
 
+        // Add audit trail properties
+        if (IncludeAuditTrail)
+        {
+            sb.AppendLine($"{TripleIndent}// Audit trail");
+            sb.AppendLine($"{TripleIndent}CreatedBy = _currentUser.UserId,");
+            sb.AppendLine($"{TripleIndent}CreatedDate = _dateTime.UtcNow,");
+        }
+
         sb.AppendLine($"{DoubleIndent}}};");
         sb.AppendLine();
         sb.AppendLine($"{DoubleIndent}_context.{entityName}s.Add(entity);");
 
         if (commandInfo.IsAsync)
         {
-            sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken);");
+            sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken){configureAwait};");
         }
         else
         {
@@ -474,6 +494,13 @@ public sealed class CommandGenerator : ICommandGenerator
         }
 
         sb.AppendLine();
+
+        // Add logging at end
+        if (IncludeLogger)
+        {
+            sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"{entityName} created with Id {{Id}}\", entity.Id);");
+            sb.AppendLine();
+        }
 
         // Return appropriate result based on return type
         if (commandInfo.ReturnType.Contains("Result"))
@@ -525,8 +552,10 @@ public sealed class CommandGenerator : ICommandGenerator
         }
     }
 
-    private static void GenerateUpdateImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
+    private void GenerateUpdateImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
     {
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
         // Assume first property is Id
         var idProperty = commandInfo.Properties.FirstOrDefault(p =>
             p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
@@ -534,9 +563,16 @@ public sealed class CommandGenerator : ICommandGenerator
 
         if (idProperty != null)
         {
+            // Add logging at start
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Updating {entityName} with Id {{Id}}\", request.{idProperty.Name});");
+                sb.AppendLine();
+            }
+
             if (commandInfo.IsAsync)
             {
-                sb.AppendLine($"{DoubleIndent}var entity = await _context.{entityName}s.FindAsync(new object[] {{ request.{idProperty.Name} }}, cancellationToken);");
+                sb.AppendLine($"{DoubleIndent}var entity = await _context.{entityName}s.FindAsync(new object[] {{ request.{idProperty.Name} }}, cancellationToken){configureAwait};");
             }
             else
             {
@@ -544,12 +580,24 @@ public sealed class CommandGenerator : ICommandGenerator
             }
 
             sb.AppendLine();
-            sb.AppendLine($"{DoubleIndent}if (entity == null)");
+            sb.AppendLine($"{DoubleIndent}if (entity is null)");
             sb.AppendLine($"{DoubleIndent}{{");
+
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{TripleIndent}_logger.LogWarning(\"{entityName} with Id {{Id}} not found\", request.{idProperty.Name});");
+            }
 
             if (commandInfo.ReturnType.Contains("Result"))
             {
-                sb.AppendLine($"{TripleIndent}return Result.Failure(\"{entityName} not found\");");
+                if (commandInfo.IsAsync)
+                {
+                    sb.AppendLine($"{TripleIndent}return Result.Failure(Error.NotFound);");
+                }
+                else
+                {
+                    sb.AppendLine($"{TripleIndent}return Task.FromResult(Result.Failure(Error.NotFound));");
+                }
             }
             else
             {
@@ -559,16 +607,26 @@ public sealed class CommandGenerator : ICommandGenerator
             sb.AppendLine($"{DoubleIndent}}}");
             sb.AppendLine();
 
+            sb.AppendLine($"{DoubleIndent}// Update properties");
             foreach (var prop in commandInfo.Properties.Where(p => p != idProperty))
             {
                 sb.AppendLine($"{DoubleIndent}entity.{prop.Name} = request.{prop.Name};");
+            }
+
+            // Add audit trail
+            if (IncludeAuditTrail)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"{DoubleIndent}// Audit trail");
+                sb.AppendLine($"{DoubleIndent}entity.ModifiedBy = _currentUser.UserId;");
+                sb.AppendLine($"{DoubleIndent}entity.ModifiedDate = _dateTime.UtcNow;");
             }
 
             sb.AppendLine();
 
             if (commandInfo.IsAsync)
             {
-                sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken);");
+                sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken){configureAwait};");
             }
             else
             {
@@ -576,6 +634,13 @@ public sealed class CommandGenerator : ICommandGenerator
             }
 
             sb.AppendLine();
+
+            // Add logging at end
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"{entityName} with Id {{Id}} updated successfully\", request.{idProperty.Name});");
+                sb.AppendLine();
+            }
 
             if (commandInfo.ReturnType.Contains("Result"))
             {
@@ -606,8 +671,10 @@ public sealed class CommandGenerator : ICommandGenerator
         }
     }
 
-    private static void GenerateDeleteImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
+    private void GenerateDeleteImplementation(StringBuilder sb, CommandInfo commandInfo, string entityName)
     {
+        var configureAwait = IncludeConfigureAwait ? ".ConfigureAwait(false)" : "";
+
         // Assume first property is Id
         var idProperty = commandInfo.Properties.FirstOrDefault(p =>
             p.Name.Equals("Id", StringComparison.OrdinalIgnoreCase) ||
@@ -615,9 +682,16 @@ public sealed class CommandGenerator : ICommandGenerator
 
         if (idProperty != null)
         {
+            // Add logging at start
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"Deleting {entityName} with Id {{Id}}\", request.{idProperty.Name});");
+                sb.AppendLine();
+            }
+
             if (commandInfo.IsAsync)
             {
-                sb.AppendLine($"{DoubleIndent}var entity = await _context.{entityName}s.FindAsync(new object[] {{ request.{idProperty.Name} }}, cancellationToken);");
+                sb.AppendLine($"{DoubleIndent}var entity = await _context.{entityName}s.FindAsync(new object[] {{ request.{idProperty.Name} }}, cancellationToken){configureAwait};");
             }
             else
             {
@@ -625,12 +699,24 @@ public sealed class CommandGenerator : ICommandGenerator
             }
 
             sb.AppendLine();
-            sb.AppendLine($"{DoubleIndent}if (entity == null)");
+            sb.AppendLine($"{DoubleIndent}if (entity is null)");
             sb.AppendLine($"{DoubleIndent}{{");
+
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{TripleIndent}_logger.LogWarning(\"{entityName} with Id {{Id}} not found for deletion\", request.{idProperty.Name});");
+            }
 
             if (commandInfo.ReturnType.Contains("Result"))
             {
-                sb.AppendLine($"{TripleIndent}return Result.Failure(\"{entityName} not found\");");
+                if (commandInfo.IsAsync)
+                {
+                    sb.AppendLine($"{TripleIndent}return Result.Failure(Error.NotFound);");
+                }
+                else
+                {
+                    sb.AppendLine($"{TripleIndent}return Task.FromResult(Result.Failure(Error.NotFound));");
+                }
             }
             else
             {
@@ -643,7 +729,7 @@ public sealed class CommandGenerator : ICommandGenerator
 
             if (commandInfo.IsAsync)
             {
-                sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken);");
+                sb.AppendLine($"{DoubleIndent}await _context.SaveChangesAsync(cancellationToken){configureAwait};");
             }
             else
             {
@@ -651,6 +737,13 @@ public sealed class CommandGenerator : ICommandGenerator
             }
 
             sb.AppendLine();
+
+            // Add logging at end
+            if (IncludeLogger)
+            {
+                sb.AppendLine($"{DoubleIndent}_logger.LogInformation(\"{entityName} with Id {{Id}} deleted successfully\", request.{idProperty.Name});");
+                sb.AppendLine();
+            }
 
             if (commandInfo.ReturnType.Contains("Result"))
             {
@@ -681,25 +774,4 @@ public sealed class CommandGenerator : ICommandGenerator
         }
     }
 
-    /// <summary>
-    /// Extracts the root namespace from a full namespace (e.g., "MyApp.Application.Store.Commands" -> "MyApp")
-    /// </summary>
-    private static string ExtractRootNamespace(string fullNamespace)
-    {
-        if (string.IsNullOrWhiteSpace(fullNamespace))
-            return "Application";
-
-        var parts = fullNamespace.Split('.');
-        // Find where "Application" starts and return everything before it
-        for (int i = 0; i < parts.Length; i++)
-        {
-            if (parts[i].Equals("Application", StringComparison.OrdinalIgnoreCase))
-            {
-                return i > 0 ? string.Join(".", parts.Take(i)) : parts[0];
-            }
-        }
-
-        // If no Application found, return first part
-        return parts[0];
-    }
 }

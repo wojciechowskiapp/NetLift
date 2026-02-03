@@ -296,8 +296,27 @@ public sealed class ControllerSlimmer : IControllerTransformer
             if (!string.IsNullOrEmpty(_rootNamespace))
             {
                 _requiredUsings.Add($"{_rootNamespace}.Application.Common.Interfaces");
+
+                // Add command/query namespace based on the action type
+                var controllerBaseName = context.Controller.ClassName.Replace("Controller", string.Empty);
+                if (context.GenerateQuery)
+                {
+                    _requiredUsings.Add($"{_rootNamespace}.Application.{controllerBaseName}.Queries");
+                }
+                else
+                {
+                    _requiredUsings.Add($"{_rootNamespace}.Application.{controllerBaseName}.Commands");
+                }
             }
             _requiredUsings.Add("Microsoft.AspNetCore.Mvc");
+            _requiredUsings.Add("System.Threading.Tasks");
+
+            // Add authorization using if the method has [Authorize] attribute
+            if (method.AttributeLists.SelectMany(al => al.Attributes)
+                .Any(a => a.Name.ToString().Contains("Authorize", StringComparison.Ordinal)))
+            {
+                _requiredUsings.Add("Microsoft.AspNetCore.Authorization");
+            }
 
             return transformed;
         }
@@ -383,7 +402,14 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var fieldRoot = fieldTree.GetRoot();
             var mediatorFieldDecl = fieldRoot.DescendantNodes()
                 .OfType<FieldDeclarationSyntax>()
-                .First()
+                .FirstOrDefault();
+
+            if (mediatorFieldDecl is null)
+            {
+                throw new InvalidOperationException("Failed to parse IMediator field declaration");
+            }
+
+            mediatorFieldDecl = mediatorFieldDecl
                 .WithLeadingTrivia(SyntaxFactory.Whitespace("    "))
                 .WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
 
@@ -396,7 +422,14 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var constructorRoot = constructorTree.GetRoot();
             var constructor = constructorRoot.DescendantNodes()
                 .OfType<ConstructorDeclarationSyntax>()
-                .First()
+                .FirstOrDefault();
+
+            if (constructor is null)
+            {
+                throw new InvalidOperationException("Failed to parse IMediator constructor declaration");
+            }
+
+            constructor = constructor
                 .WithLeadingTrivia(SyntaxFactory.EndOfLine("\n"), SyntaxFactory.Whitespace("    "))
                 .WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
 
@@ -421,7 +454,14 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var fieldRoot = fieldTree.GetRoot();
             var mediatorFieldDecl = fieldRoot.DescendantNodes()
                 .OfType<FieldDeclarationSyntax>()
-                .First()
+                .FirstOrDefault();
+
+            if (mediatorFieldDecl is null)
+            {
+                throw new InvalidOperationException("Failed to parse IMediator field declaration");
+            }
+
+            mediatorFieldDecl = mediatorFieldDecl
                 .WithLeadingTrivia(SyntaxFactory.Whitespace("    "))
                 .WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
 
@@ -435,7 +475,12 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var paramListRoot = paramListTree.GetRoot();
             var newParameterList = paramListRoot.DescendantNodes()
                 .OfType<ParameterListSyntax>()
-                .First();
+                .FirstOrDefault();
+
+            if (newParameterList is null)
+            {
+                throw new InvalidOperationException("Failed to parse parameter list");
+            }
 
             // Build assignment
             var assignmentCode = $"{mediatorField} = {mediatorParam};";
@@ -443,7 +488,12 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var assignmentRoot = assignmentTree.GetRoot();
             var assignment = assignmentRoot.DescendantNodes()
                 .OfType<ExpressionStatementSyntax>()
-                .First();
+                .FirstOrDefault();
+
+            if (assignment is null)
+            {
+                throw new InvalidOperationException("Failed to parse assignment statement");
+            }
 
             var newBody = existingConstructor.Body != null
                 ? existingConstructor.Body.WithStatements(
@@ -564,7 +614,12 @@ public sealed class ControllerSlimmer : IControllerTransformer
             var sendStatement = sendCallTree.GetRoot()
                 .DescendantNodes()
                 .OfType<LocalDeclarationStatementSyntax>()
-                .First();
+                .FirstOrDefault();
+
+            if (sendStatement is null)
+            {
+                throw new InvalidOperationException("Failed to parse MediatR Send call statement");
+            }
 
             // Build return statement based on action type
             var returnStatement = BuildReturnStatement(context);
@@ -698,10 +753,17 @@ public sealed class ControllerSlimmer : IControllerTransformer
             }
 
             var returnTree = CSharpSyntaxTree.ParseText($"class Temp {{ void M() {{ return {returnExpression}; }} }}");
-            return returnTree.GetRoot()
+            var returnStatement = returnTree.GetRoot()
                 .DescendantNodes()
                 .OfType<ReturnStatementSyntax>()
-                .First();
+                .FirstOrDefault();
+
+            if (returnStatement is null)
+            {
+                throw new InvalidOperationException("Failed to parse return statement");
+            }
+
+            return returnStatement;
         }
 
         /// <summary>
@@ -825,7 +887,13 @@ public sealed class ControllerSlimmer : IControllerTransformer
                         var parsedUsing = usingTree.GetRoot()
                             .DescendantNodes()
                             .OfType<UsingDirectiveSyntax>()
-                            .First();
+                            .FirstOrDefault();
+
+                        if (parsedUsing is null)
+                        {
+                            throw new InvalidOperationException($"Failed to parse using directive: {ns}");
+                        }
+
                         return parsedUsing.WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
                     })
                     .ToList();

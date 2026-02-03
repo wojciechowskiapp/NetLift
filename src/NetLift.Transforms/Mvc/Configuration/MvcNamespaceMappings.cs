@@ -21,6 +21,10 @@ public static class MvcNamespaceMappings
         ["System.Web.WebPages"] = "Microsoft.AspNetCore.Mvc.Razor",
         ["System.Web.Helpers"] = "Microsoft.AspNetCore.Mvc.Rendering",
         ["System.Web.Optimization"] = "WebOptimizer",
+        // System.Web.Security → ASP.NET Core Identity (requires manual migration)
+        ["System.Web.Security"] = "Microsoft.AspNetCore.Identity",
+        // System.Web base types → ASP.NET Core Http
+        ["System.Web"] = "Microsoft.AspNetCore.Http",
         // Entity Framework 6 → Entity Framework Core
         ["System.Data.Entity"] = "Microsoft.EntityFrameworkCore",
         ["System.Data.Entity.Infrastructure"] = "Microsoft.EntityFrameworkCore.Infrastructure",
@@ -33,6 +37,15 @@ public static class MvcNamespaceMappings
         // PagedList → X.PagedList (ASP.NET Core compatible)
         ["PagedList"] = "X.PagedList",
         ["PagedList.Mvc"] = "X.PagedList.Mvc.Core"
+    };
+
+    /// <summary>
+    /// Namespaces that should be removed entirely (no direct equivalent exists).
+    /// Code using these needs manual migration.
+    /// </summary>
+    public static IReadOnlySet<string> RemovableNamespaces { get; } = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "System.Web.Security" // MembershipCreateStatus, Membership, etc. need Identity rewrite
     };
 
     /// <summary>

@@ -1,4 +1,6 @@
 using System.Xml.Linq;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
 using NetLift.Core.Models;
 using NetLift.Core.Models.Config;
@@ -112,11 +114,32 @@ public sealed class ConfigMigrationService : IConfigMigrationService
             var appSettingsJsonPath = Path.Combine(projectDirectory, "appsettings.json");
             var appSettingsJsonContent = _appSettingsJsonGenerator.Generate(connectionStrings, appSettings, systemWeb);
 
+            string? originalAppSettingsContent = null;
+            if (File.Exists(appSettingsJsonPath))
+            {
+                try
+                {
+                    originalAppSettingsContent = await File.ReadAllTextAsync(appSettingsJsonPath, cancellationToken);
+                }
+                catch (FileNotFoundException)
+                {
+                    diagnostics.Add($"WARNING: File {appSettingsJsonPath} was deleted during migration.");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    diagnostics.Add($"ERROR: Access denied reading {appSettingsJsonPath}: {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    diagnostics.Add($"ERROR: I/O error reading {appSettingsJsonPath}: {ex.Message}");
+                }
+            }
+
             generatedFiles.Add(new FileChange
             {
                 FilePath = appSettingsJsonPath,
                 Type = File.Exists(appSettingsJsonPath) ? ChangeType.Modify : ChangeType.Create,
-                OriginalContent = File.Exists(appSettingsJsonPath) ? await File.ReadAllTextAsync(appSettingsJsonPath, cancellationToken) : null,
+                OriginalContent = originalAppSettingsContent,
                 NewContent = appSettingsJsonContent,
                 Confidence = confidence,
                 Description = "Generated appsettings.json from web.config"
@@ -127,11 +150,32 @@ public sealed class ConfigMigrationService : IConfigMigrationService
             var appSettingsDevContent = _environmentAppSettingsGenerator.GenerateDevelopment(
                 connectionStrings, appSettings, systemWeb, debugTransform);
 
+            string? originalDevContent = null;
+            if (File.Exists(appSettingsDevPath))
+            {
+                try
+                {
+                    originalDevContent = await File.ReadAllTextAsync(appSettingsDevPath, cancellationToken);
+                }
+                catch (FileNotFoundException)
+                {
+                    diagnostics.Add($"WARNING: File {appSettingsDevPath} was deleted during migration.");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    diagnostics.Add($"ERROR: Access denied reading {appSettingsDevPath}: {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    diagnostics.Add($"ERROR: I/O error reading {appSettingsDevPath}: {ex.Message}");
+                }
+            }
+
             generatedFiles.Add(new FileChange
             {
                 FilePath = appSettingsDevPath,
                 Type = File.Exists(appSettingsDevPath) ? ChangeType.Modify : ChangeType.Create,
-                OriginalContent = File.Exists(appSettingsDevPath) ? await File.ReadAllTextAsync(appSettingsDevPath, cancellationToken) : null,
+                OriginalContent = originalDevContent,
                 NewContent = appSettingsDevContent,
                 Confidence = confidence,
                 Description = "Generated appsettings.Development.json from web.config and Web.Debug.config"
@@ -142,11 +186,32 @@ public sealed class ConfigMigrationService : IConfigMigrationService
             var appSettingsProdContent = _environmentAppSettingsGenerator.GenerateProduction(
                 connectionStrings, appSettings, systemWeb, releaseTransform);
 
+            string? originalProdContent = null;
+            if (File.Exists(appSettingsProdPath))
+            {
+                try
+                {
+                    originalProdContent = await File.ReadAllTextAsync(appSettingsProdPath, cancellationToken);
+                }
+                catch (FileNotFoundException)
+                {
+                    diagnostics.Add($"WARNING: File {appSettingsProdPath} was deleted during migration.");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    diagnostics.Add($"ERROR: Access denied reading {appSettingsProdPath}: {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    diagnostics.Add($"ERROR: I/O error reading {appSettingsProdPath}: {ex.Message}");
+                }
+            }
+
             generatedFiles.Add(new FileChange
             {
                 FilePath = appSettingsProdPath,
                 Type = File.Exists(appSettingsProdPath) ? ChangeType.Modify : ChangeType.Create,
-                OriginalContent = File.Exists(appSettingsProdPath) ? await File.ReadAllTextAsync(appSettingsProdPath, cancellationToken) : null,
+                OriginalContent = originalProdContent,
                 NewContent = appSettingsProdContent,
                 Confidence = confidence,
                 Description = "Generated appsettings.Production.json from web.config and Web.Release.config"
@@ -154,7 +219,7 @@ public sealed class ConfigMigrationService : IConfigMigrationService
 
             // Generate Program.cs
             var programCsPath = Path.Combine(projectDirectory, "Program.cs");
-            var programGenerationOptions = DetermineProgramGenerationOptions(systemWeb);
+            var programGenerationOptions = DetermineProgramGenerationOptions(systemWeb, projectDirectory);
             var programCsContent = _programCsGenerator.Generate(systemWeb, appSettings, programGenerationOptions);
 
             // Check if Program.cs already exists
@@ -166,11 +231,32 @@ public sealed class ConfigMigrationService : IConfigMigrationService
                 diagnostics.Add("INFO: Program.cs already exists and will be overwritten. Review the generated file carefully.");
             }
 
+            string? originalProgramContent = null;
+            if (programCsExists)
+            {
+                try
+                {
+                    originalProgramContent = await File.ReadAllTextAsync(programCsPath, cancellationToken);
+                }
+                catch (FileNotFoundException)
+                {
+                    diagnostics.Add($"WARNING: File {programCsPath} was deleted during migration.");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    diagnostics.Add($"ERROR: Access denied reading {programCsPath}: {ex.Message}");
+                }
+                catch (IOException ex)
+                {
+                    diagnostics.Add($"ERROR: I/O error reading {programCsPath}: {ex.Message}");
+                }
+            }
+
             generatedFiles.Add(new FileChange
             {
                 FilePath = programCsPath,
                 Type = programCsExists ? ChangeType.Modify : ChangeType.Create,
-                OriginalContent = programCsExists ? await File.ReadAllTextAsync(programCsPath, cancellationToken) : null,
+                OriginalContent = originalProgramContent,
                 NewContent = programCsContent,
                 Confidence = programCsConfidence,
                 Description = programCsExists
@@ -234,8 +320,14 @@ public sealed class ConfigMigrationService : IConfigMigrationService
             return files.FirstOrDefault(f =>
                 Path.GetFileName(f).Equals("web.config", StringComparison.OrdinalIgnoreCase));
         }
-        catch
+        catch (UnauthorizedAccessException)
         {
+            // Access denied to directory
+            return null;
+        }
+        catch (IOException)
+        {
+            // I/O error enumerating files
             return null;
         }
     }
@@ -256,22 +348,169 @@ public sealed class ConfigMigrationService : IConfigMigrationService
             var content = await File.ReadAllTextAsync(path, cancellationToken);
             return XDocument.Parse(content);
         }
-        catch
+        catch (FileNotFoundException)
         {
+            // Transform file not found
+            return null;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Access denied to transform file
+            return null;
+        }
+        catch (IOException)
+        {
+            // I/O error reading transform file
+            return null;
+        }
+        catch (System.Xml.XmlException)
+        {
+            // Invalid XML in transform file
             return null;
         }
     }
 
-    private static ProgramGenerationOptions DetermineProgramGenerationOptions(SystemWebSection systemWeb)
+    private static ProgramGenerationOptions DetermineProgramGenerationOptions(SystemWebSection systemWeb, string projectDirectory)
     {
         // Determine what features to enable in Program.cs based on web.config settings
         // This is a basic heuristic and can be enhanced
+
+        // Detect if this is an MVC app with Razor views by checking for Views folder or .cshtml files
+        var isMvcWithViews = DetectMvcWithViews(projectDirectory);
+
+        // Try to find DbContext class name
+        var dbContextName = DetectDbContextName(projectDirectory);
+
         return new ProgramGenerationOptions
         {
             IncludeSwagger = true,
             IncludeAuthentication = false, // Will be set by authentication migration
             IncludeSession = false, // Will be set by session migration
-            IncludeHealthChecks = true
+            IncludeHealthChecks = true,
+            IsMvcWithViews = isMvcWithViews,
+            DbContextName = dbContextName
         };
+    }
+
+    private static bool DetectMvcWithViews(string projectDirectory)
+    {
+        // Check for Views folder
+        var viewsPath = Path.Combine(projectDirectory, "Views");
+        if (Directory.Exists(viewsPath))
+        {
+            return true;
+        }
+
+        // Check for any .cshtml files in the project
+        try
+        {
+            var cshtmlFiles = Directory.GetFiles(projectDirectory, "*.cshtml", SearchOption.AllDirectories);
+            return cshtmlFiles.Length > 0;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Access denied to directory
+            return false;
+        }
+        catch (IOException)
+        {
+            // I/O error enumerating files
+            return false;
+        }
+    }
+
+    private static string? DetectDbContextName(string projectDirectory)
+    {
+        // Try to find a class that inherits from DbContext by scanning C# files using Roslyn
+        try
+        {
+            var csFiles = Directory.GetFiles(projectDirectory, "*.cs", SearchOption.AllDirectories);
+            foreach (var csFile in csFiles)
+            {
+                // Skip generated files, obj folder, etc.
+                if (csFile.Contains("\\obj\\") || csFile.Contains("/obj/") ||
+                    csFile.Contains("\\bin\\") || csFile.Contains("/bin/"))
+                {
+                    continue;
+                }
+
+                try
+                {
+                    var content = File.ReadAllText(csFile);
+                    var dbContextClasses = FindDbContextClasses(content);
+
+                    var dbContextName = dbContextClasses.FirstOrDefault();
+                    if (dbContextName != null)
+                    {
+                        return dbContextName;
+                    }
+                }
+                catch (FileNotFoundException)
+                {
+                    // File was deleted, skip
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    // Access denied, skip this file
+                }
+                catch (IOException)
+                {
+                    // I/O error, skip this file
+                }
+            }
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // Directory access denied, can't scan for DbContext
+        }
+        catch (IOException)
+        {
+            // I/O error enumerating files
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Finds all classes that inherit from DbContext using Roslyn syntax parsing.
+    /// Handles partial classes, attributes, generic base types, multiple inheritance, and comments.
+    /// </summary>
+    private static IEnumerable<string> FindDbContextClasses(string csharpCode)
+    {
+        try
+        {
+            var tree = CSharpSyntaxTree.ParseText(csharpCode);
+            var root = tree.GetRoot();
+
+            var dbContextClasses = root.DescendantNodes()
+                .OfType<ClassDeclarationSyntax>()
+                .Where(c => InheritsFromDbContext(c))
+                .Select(c => c.Identifier.Text);
+
+            return dbContextClasses;
+        }
+        catch
+        {
+            return Enumerable.Empty<string>();
+        }
+    }
+
+    /// <summary>
+    /// Determines if a class declaration inherits from DbContext.
+    /// Supports various formats: DbContext, Namespace.DbContext, DbContext&lt;T&gt;
+    /// </summary>
+    private static bool InheritsFromDbContext(ClassDeclarationSyntax classDecl)
+    {
+        if (classDecl.BaseList == null)
+            return false;
+
+        return classDecl.BaseList.Types
+            .Any(t =>
+            {
+                var typeName = t.Type.ToString();
+                return typeName == "DbContext" ||
+                       typeName.EndsWith(".DbContext") ||
+                       typeName.StartsWith("DbContext<");
+            });
     }
 }

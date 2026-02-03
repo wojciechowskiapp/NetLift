@@ -1,6 +1,11 @@
 using System.Diagnostics;
 using NetLift.Core.Interfaces;
+using NetLift.Core.Interfaces.Razor;
+using NetLift.Core.Interfaces.StaticFiles;
+using NetLift.Core.Interfaces.SignalR;
+using NetLift.Core.Interfaces.DependencyInjection;
 using NetLift.Core.Models;
+using NetLift.Core.Models.StaticFiles;
 
 namespace NetLift.Transforms;
 
@@ -34,6 +39,25 @@ public class MigrationOrchestrator : IMigrationOrchestrator
     private readonly IRazorNamespaceTransformer _razorNamespaceTransformer;
     private readonly IPackageJsonGenerator _packageJsonGenerator;
 
+    // P3: Razor Views (HTML helpers → Tag Helpers)
+    private readonly IRazorViewAnalyzer _razorViewAnalyzer;
+    private readonly IRazorViewTransformer _razorViewTransformer;
+
+    // P4: Static Files (Content → wwwroot)
+    private readonly IStaticFilesAnalyzer _staticFilesAnalyzer;
+    private readonly IStaticFilesMigrator _staticFilesMigrator;
+
+    // P5: SignalR Hub transformation
+    private readonly ISignalRHubAnalyzer _signalRHubAnalyzer;
+    private readonly ISignalRHubTransformer _signalRHubTransformer;
+    private readonly ISignalRStartupGenerator _signalRStartupGenerator;
+    private readonly IGlobalHostAnalyzer _globalHostAnalyzer;
+
+    // P6: DI Container transformation
+    private readonly IDIContainerDetector _diContainerDetector;
+    private readonly ILifetimeMapper _lifetimeMapper;
+    private readonly IDIContainerAnalyzer _diContainerAnalyzer;
+
     /// <summary>
     /// Initializes a new instance of the <see cref="MigrationOrchestrator"/> class.
     /// </summary>
@@ -58,7 +82,18 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         IWebpackConfigGenerator webpackConfigGenerator,
         IAssetReferenceTransformer assetReferenceTransformer,
         IRazorNamespaceTransformer razorNamespaceTransformer,
-        IPackageJsonGenerator packageJsonGenerator)
+        IPackageJsonGenerator packageJsonGenerator,
+        IRazorViewAnalyzer razorViewAnalyzer,
+        IRazorViewTransformer razorViewTransformer,
+        IStaticFilesAnalyzer staticFilesAnalyzer,
+        IStaticFilesMigrator staticFilesMigrator,
+        ISignalRHubAnalyzer signalRHubAnalyzer,
+        ISignalRHubTransformer signalRHubTransformer,
+        ISignalRStartupGenerator signalRStartupGenerator,
+        IGlobalHostAnalyzer globalHostAnalyzer,
+        IDIContainerDetector diContainerDetector,
+        ILifetimeMapper lifetimeMapper,
+        IDIContainerAnalyzer diContainerAnalyzer)
     {
         _projectParser = projectParser ?? throw new ArgumentNullException(nameof(projectParser));
         _projectTypeDetector = projectTypeDetector ?? throw new ArgumentNullException(nameof(projectTypeDetector));
@@ -81,6 +116,17 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         _assetReferenceTransformer = assetReferenceTransformer ?? throw new ArgumentNullException(nameof(assetReferenceTransformer));
         _razorNamespaceTransformer = razorNamespaceTransformer ?? throw new ArgumentNullException(nameof(razorNamespaceTransformer));
         _packageJsonGenerator = packageJsonGenerator ?? throw new ArgumentNullException(nameof(packageJsonGenerator));
+        _razorViewAnalyzer = razorViewAnalyzer ?? throw new ArgumentNullException(nameof(razorViewAnalyzer));
+        _razorViewTransformer = razorViewTransformer ?? throw new ArgumentNullException(nameof(razorViewTransformer));
+        _staticFilesAnalyzer = staticFilesAnalyzer ?? throw new ArgumentNullException(nameof(staticFilesAnalyzer));
+        _staticFilesMigrator = staticFilesMigrator ?? throw new ArgumentNullException(nameof(staticFilesMigrator));
+        _signalRHubAnalyzer = signalRHubAnalyzer ?? throw new ArgumentNullException(nameof(signalRHubAnalyzer));
+        _signalRHubTransformer = signalRHubTransformer ?? throw new ArgumentNullException(nameof(signalRHubTransformer));
+        _signalRStartupGenerator = signalRStartupGenerator ?? throw new ArgumentNullException(nameof(signalRStartupGenerator));
+        _globalHostAnalyzer = globalHostAnalyzer ?? throw new ArgumentNullException(nameof(globalHostAnalyzer));
+        _diContainerDetector = diContainerDetector ?? throw new ArgumentNullException(nameof(diContainerDetector));
+        _lifetimeMapper = lifetimeMapper ?? throw new ArgumentNullException(nameof(lifetimeMapper));
+        _diContainerAnalyzer = diContainerAnalyzer ?? throw new ArgumentNullException(nameof(diContainerAnalyzer));
     }
 
     /// <inheritdoc/>
@@ -127,7 +173,11 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 FilePath = projectPath
             });
 
-            var projectDir = Path.GetDirectoryName(projectPath)!;
+            var projectDir = Path.GetDirectoryName(projectPath);
+            if (string.IsNullOrEmpty(projectDir))
+            {
+                throw new ArgumentException($"Invalid path - cannot determine directory: {projectPath}", nameof(projectInfo));
+            }
 
             // Phase 2: Convert project to SDK-style format (if not already converted)
             // Check if the current project file is already SDK-style by reading it
@@ -249,11 +299,70 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                     cancellationToken);
             }
 
-            // Phase 8: Generate manual tasks for low-confidence transformations
+            // Phase 8: Transform Razor Views (HTML helpers → Tag Helpers)
+            if (options.TransformRazorViews && projectType.IsMvc.Detected)
+            {
+                await TransformRazorViewsAsync(
+                    projectDir,
+                    changes,
+                    diagnostics,
+                    confidenceScores,
+                    cancellationToken);
+            }
+
+            // Phase 9: Migrate Static Files (Content/Scripts → wwwroot)
+            // Console.Error.WriteLine("[DEBUG] Starting Phase 9: Static Files");
+            if (options.TransformStaticFiles && projectType.IsMvc.Detected)
+            {
+                await MigrateStaticFilesAsync(
+                    projectDir,
+                    changes,
+                    diagnostics,
+                    confidenceScores,
+                    options.DryRun,
+                    cancellationToken);
+            }
+            // Console.Error.WriteLine("[DEBUG] Phase 9 completed");
+
+            // Phase 10: Transform SignalR Hubs (detect from package references)
+            // Console.Error.WriteLine("[DEBUG] Starting Phase 10: SignalR");
+            var hasSignalR = projectInfo.PackageReferences.Any(p =>
+                p.Id.Contains("SignalR", StringComparison.OrdinalIgnoreCase) ||
+                p.Id.Equals("Microsoft.AspNet.SignalR", StringComparison.OrdinalIgnoreCase) ||
+                p.Id.Equals("Microsoft.AspNet.SignalR.Core", StringComparison.OrdinalIgnoreCase));
+            if (options.TransformSignalR && hasSignalR)
+            {
+                await TransformSignalRAsync(
+                    projectDir,
+                    projectInfo,
+                    changes,
+                    diagnostics,
+                    confidenceScores,
+                    cancellationToken);
+            }
+
+            // Phase 11: Transform DI Container registrations
+            // Console.Error.WriteLine("[DEBUG] Starting Phase 11: DI");
+            if (options.TransformDependencyInjection)
+            {
+                await TransformDependencyInjectionAsync(
+                    projectDir,
+                    projectInfo,
+                    changes,
+                    diagnostics,
+                    confidenceScores,
+                    cancellationToken);
+            }
+            // Console.Error.WriteLine("[DEBUG] Phase 11 completed");
+
+            // Phase 12: Generate manual tasks for low-confidence transformations
+            // Console.Error.WriteLine("[DEBUG] Starting Phase 12: Manual Tasks");
             foreach (var change in changes.Where(c => c.Confidence < 60))
             {
                 manualTasks.Add($"Manual review required: {change.FilePath} (Confidence: {change.Confidence}%)");
             }
+
+            // Console.Error.WriteLine("[DEBUG] Phase 12 completed");
 
             // Calculate overall confidence
             var overallConfidence = confidenceScores.Any()
@@ -261,6 +370,7 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 : 0;
 
             stopwatch.Stop();
+            // Console.Error.WriteLine("[DEBUG] All phases completed, returning result");
 
             return new MigrationResult
             {
@@ -306,7 +416,11 @@ public class MigrationOrchestrator : IMigrationOrchestrator
         List<int> confidenceScores,
         CancellationToken cancellationToken)
     {
-        var projectDir = Path.GetDirectoryName(projectInfo.FilePath)!;
+        var projectDir = Path.GetDirectoryName(projectInfo.FilePath);
+        if (string.IsNullOrEmpty(projectDir))
+        {
+            throw new InvalidOperationException($"Invalid project path - cannot determine directory: {projectInfo.FilePath}");
+        }
 
         // PRE-SCAN PHASE: Detect all DbContext types across all source files
         // This enables accurate detection in controllers that reference DbContext with non-standard names
@@ -414,9 +528,17 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                     knownDbContextTypes.Add(context.ClassName);
                 }
             }
-            catch
+            catch (FileNotFoundException)
             {
-                // Ignore errors during pre-scan - we'll report them during transformation
+                // File was deleted between enumeration and read, skip silently
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Access denied, skip this file - errors will be reported during main transformation phase
+            }
+            catch (IOException)
+            {
+                // I/O error reading file, skip - errors will be reported during main transformation phase
             }
         }
 
@@ -1301,5 +1423,454 @@ public class MigrationOrchestrator : IMigrationOrchestrator
                 Code = "BUNDLE002"
             });
         }
+    }
+
+    private async Task TransformRazorViewsAsync(
+        string projectDir,
+        List<FileChange> changes,
+        List<MigrationDiagnostic> diagnostics,
+        List<int> confidenceScores,
+        CancellationToken cancellationToken)
+    {
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = "Transforming Razor views (HTML helpers → Tag Helpers)",
+            FilePath = projectDir
+        });
+
+        var viewsDir = Path.Combine(projectDir, "Views");
+        if (!Directory.Exists(viewsDir))
+        {
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = "Views directory not found, skipping Razor view transformation",
+                FilePath = projectDir
+            });
+            return;
+        }
+
+        var razorFiles = Directory.GetFiles(viewsDir, "*.cshtml", SearchOption.AllDirectories);
+        var transformedCount = 0;
+
+        foreach (var razorFile in razorFiles)
+        {
+            try
+            {
+                // Check if there's already a pending change for this file (e.g., from namespace transformation)
+                var existingChange = changes.FirstOrDefault(c => c.FilePath == razorFile && c.Type == ChangeType.Modify);
+                var originalContent = existingChange?.NewContent ?? await File.ReadAllTextAsync(razorFile, cancellationToken);
+
+                // Analyze the view for HTML helpers
+                var htmlHelpers = _razorViewAnalyzer.DetectHtmlHelpers(originalContent);
+
+                if (htmlHelpers.Count > 0)
+                {
+                    // Transform the view
+                    var transformedContent = _razorViewTransformer.TransformContent(originalContent, razorFile);
+
+                    if (transformedContent != originalContent)
+                    {
+                        // If there was an existing change, replace it with a combined change
+                        if (existingChange != null)
+                        {
+                            changes.Remove(existingChange);
+                            changes.Add(new FileChange
+                            {
+                                FilePath = razorFile,
+                                Type = ChangeType.Modify,
+                                OriginalContent = existingChange.OriginalContent,
+                                NewContent = transformedContent,
+                                Confidence = Math.Min(existingChange.Confidence, 90),
+                                Description = $"{existingChange.Description}; transformed {htmlHelpers.Count} HTML helper(s)"
+                            });
+                        }
+                        else
+                        {
+                            changes.Add(new FileChange
+                            {
+                                FilePath = razorFile,
+                                Type = ChangeType.Modify,
+                                OriginalContent = originalContent,
+                                NewContent = transformedContent,
+                                Confidence = 90, // High confidence for regex-based transformation
+                                Description = $"Transformed {htmlHelpers.Count} HTML helper(s) to Tag Helpers"
+                            });
+                        }
+                        confidenceScores.Add(90);
+                        transformedCount++;
+
+                        diagnostics.Add(new MigrationDiagnostic
+                        {
+                            Level = DiagnosticLevel.Info,
+                            Message = $"Transformed {htmlHelpers.Count} HTML helper(s) in {Path.GetFileName(razorFile)}",
+                            FilePath = razorFile
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Warning,
+                    Message = $"Failed to transform Razor view {razorFile}: {ex.Message}",
+                    FilePath = razorFile,
+                    Code = "RAZOR002"
+                });
+            }
+        }
+
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = $"Completed Razor view transformation: {transformedCount} view(s) transformed out of {razorFiles.Length}",
+            FilePath = projectDir
+        });
+    }
+
+    private async Task MigrateStaticFilesAsync(
+        string projectDir,
+        List<FileChange> changes,
+        List<MigrationDiagnostic> diagnostics,
+        List<int> confidenceScores,
+        bool dryRun,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = "Migrating static files (Content/Scripts → wwwroot)",
+                FilePath = projectDir
+            });
+
+            // Analyze the project for static files
+            var staticFilesInfo = await _staticFilesAnalyzer.AnalyzeAsync(projectDir);
+
+            if (staticFilesInfo.Folders.Count == 0)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Info,
+                    Message = "No static file folders (Content/Scripts/Images) found",
+                    FilePath = projectDir
+                });
+                return;
+            }
+
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = $"Found {staticFilesInfo.Folders.Count} static file folder(s) with {staticFilesInfo.TotalFiles} file(s)",
+                FilePath = projectDir
+            });
+
+            // Perform migration
+            var result = await _staticFilesMigrator.MigrateAsync(staticFilesInfo, dryRun);
+
+            if (result.Success)
+            {
+                // Log what folders were moved (don't add as FileChange since they're directories, not files)
+                foreach (var folder in result.MovedFolders)
+                {
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Info,
+                        Message = $"Migrated {folder.Files.Count} file(s) from {folder.SourcePath} to {folder.TargetPath}",
+                        FilePath = Path.Combine(projectDir, folder.TargetPath),
+                        Code = "STATIC_FOLDER"
+                    });
+                }
+
+                confidenceScores.Add(result.Confidence);
+
+                // Add middleware code suggestion
+                var middlewareCode = _staticFilesMigrator.GenerateStaticFilesMiddleware();
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Info,
+                    Message = $"Add to Program.cs:\n{middlewareCode}",
+                    FilePath = projectDir,
+                    Code = "STATIC_MIDDLEWARE"
+                });
+
+                foreach (var note in result.Notes)
+                {
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Info,
+                        Message = note,
+                        FilePath = projectDir
+                    });
+                }
+
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Info,
+                    Message = $"Static files migration complete: {result.FilesMovedCount} files moved, {result.ReferencesUpdatedCount} references updated",
+                    FilePath = projectDir
+                });
+            }
+            else
+            {
+                foreach (var error in result.Errors)
+                {
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Error,
+                        Message = error,
+                        FilePath = projectDir,
+                        Code = "STATIC001"
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Log error but don't fail the entire migration
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Warning,
+                Message = $"Static files migration failed (non-critical): {ex.Message}",
+                FilePath = projectDir,
+                Code = "STATIC002"
+            });
+        }
+    }
+
+    private async Task TransformSignalRAsync(
+        string projectDir,
+        ProjectInfo projectInfo,
+        List<FileChange> changes,
+        List<MigrationDiagnostic> diagnostics,
+        List<int> confidenceScores,
+        CancellationToken cancellationToken)
+    {
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = "Transforming SignalR hubs (legacy → ASP.NET Core SignalR)",
+            FilePath = projectDir
+        });
+
+        var transformedCount = 0;
+
+        var allHubs = new List<Core.Models.SignalR.SignalRHubInfo>();
+
+        // Scan source files for SignalR hubs
+        foreach (var compileItem in projectInfo.CompileItems)
+        {
+            var sourceFilePath = Path.IsPathRooted(compileItem.Include)
+                ? compileItem.Include
+                : Path.Combine(projectDir, compileItem.Include);
+
+            if (!File.Exists(sourceFilePath))
+                continue;
+
+            try
+            {
+                var sourceCode = await File.ReadAllTextAsync(sourceFilePath, cancellationToken);
+
+                // Analyze for SignalR hubs
+                var hubs = _signalRHubAnalyzer.AnalyzeFile(sourceCode, sourceFilePath);
+                allHubs.AddRange(hubs);
+
+                foreach (var hub in hubs)
+                {
+                    // Transform the hub
+                    var transformResult = _signalRHubTransformer.TransformHub(sourceCode, hub);
+
+                    if (transformResult.TransformedCode != sourceCode)
+                    {
+                        changes.Add(new FileChange
+                        {
+                            FilePath = sourceFilePath,
+                            Type = ChangeType.Modify,
+                            OriginalContent = sourceCode,
+                            NewContent = transformResult.TransformedCode,
+                            Confidence = transformResult.Confidence,
+                            Description = $"Transformed SignalR hub '{hub.ClassName}' to ASP.NET Core"
+                        });
+                        confidenceScores.Add(transformResult.Confidence);
+                        transformedCount++;
+
+                        diagnostics.Add(new MigrationDiagnostic
+                        {
+                            Level = DiagnosticLevel.Info,
+                            Message = $"Transformed SignalR hub '{hub.ClassName}' in {Path.GetFileName(sourceFilePath)}",
+                            FilePath = sourceFilePath
+                        });
+
+                        foreach (var change in transformResult.Changes)
+                        {
+                            diagnostics.Add(new MigrationDiagnostic
+                            {
+                                Level = DiagnosticLevel.Info,
+                                Message = change.Description,
+                                FilePath = sourceFilePath
+                            });
+                        }
+                    }
+                }
+
+                // Analyze for GlobalHost usage
+                var globalHostUsage = _globalHostAnalyzer.AnalyzeFile(sourceCode, sourceFilePath);
+                if (globalHostUsage != null && globalHostUsage.Usages.Count > 0)
+                {
+                    foreach (var usage in globalHostUsage.Usages)
+                    {
+                        diagnostics.Add(new MigrationDiagnostic
+                        {
+                            Level = DiagnosticLevel.Warning,
+                            Message = $"GlobalHost usage detected: {usage.Pattern} - requires IHubContext<T> injection",
+                            FilePath = sourceFilePath,
+                            Code = "SIGNALR002"
+                        });
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Warning,
+                    Message = $"Failed to transform SignalR in {sourceFilePath}: {ex.Message}",
+                    FilePath = sourceFilePath,
+                    Code = "SIGNALR003"
+                });
+            }
+        }
+
+        // Generate startup code
+        var serviceRegistration = _signalRStartupGenerator.GenerateServiceRegistration();
+        var endpointMappings = _signalRStartupGenerator.GenerateEndpointMappings(allHubs);
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = $"Add to Program.cs for SignalR:\n{serviceRegistration}\n\n{endpointMappings}",
+            FilePath = projectDir,
+            Code = "SIGNALR_STARTUP"
+        });
+
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = $"SignalR transformation complete: {transformedCount} file(s) transformed",
+            FilePath = projectDir
+        });
+    }
+
+    private async Task TransformDependencyInjectionAsync(
+        string projectDir,
+        ProjectInfo projectInfo,
+        List<FileChange> changes,
+        List<MigrationDiagnostic> diagnostics,
+        List<int> confidenceScores,
+        CancellationToken cancellationToken)
+    {
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = "Analyzing DI container registrations",
+            FilePath = projectDir
+        });
+
+        // Detect which DI container is in use from package references
+        var detectedFramework = _diContainerDetector.DetectFromPackages(projectInfo.PackageReferences);
+
+        if (detectedFramework == Core.Models.DependencyInjection.DIFrameworkType.Unknown)
+        {
+            diagnostics.Add(new MigrationDiagnostic
+            {
+                Level = DiagnosticLevel.Info,
+                Message = "No third-party DI container detected (Autofac, Unity, Ninject, StructureMap)",
+                FilePath = projectDir
+            });
+            return;
+        }
+
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = $"Detected DI container: {detectedFramework}",
+            FilePath = projectDir
+        });
+
+        // Find configuration files for the detected framework
+        var configFiles = await _diContainerDetector.FindConfigurationFilesAsync(projectDir, detectedFramework);
+
+        // Analyze registrations
+        foreach (var configFile in configFiles)
+        {
+            var configPath = Path.IsPathRooted(configFile)
+                ? configFile
+                : Path.Combine(projectDir, configFile);
+
+            if (!File.Exists(configPath))
+                continue;
+
+            try
+            {
+                var sourceCode = await File.ReadAllTextAsync(configPath, cancellationToken);
+                var registrations = await _diContainerAnalyzer.AnalyzeRegistrationsFromContentAsync(sourceCode, configPath);
+
+                if (registrations.Count > 0)
+                {
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Info,
+                        Message = $"Found {registrations.Count} service registration(s) in {Path.GetFileName(configPath)}",
+                        FilePath = configPath
+                    });
+
+                    // Map lifetimes
+                    foreach (var reg in registrations)
+                    {
+                        var mappedLifetime = await _diContainerAnalyzer.MapLifetimeAsync(reg.Lifetime.ToString());
+
+                        diagnostics.Add(new MigrationDiagnostic
+                        {
+                            Level = DiagnosticLevel.Info,
+                            Message = $"  {reg.ServiceType} → {reg.ImplementationType} ({reg.Lifetime} → {mappedLifetime.TargetLifetime})",
+                            FilePath = configPath
+                        });
+                    }
+
+                    // Add a note about manual migration (full transformer not yet implemented)
+                    diagnostics.Add(new MigrationDiagnostic
+                    {
+                        Level = DiagnosticLevel.Warning,
+                        Message = $"DI container transformer not fully implemented. Found {registrations.Count} registration(s) - manual migration to MS.DI required.",
+                        FilePath = configPath,
+                        Code = "DI001"
+                    });
+
+                    var avgConfidence = registrations.Any()
+                        ? (int)registrations.Average(r => r.ConfidenceScore)
+                        : 70;
+                    confidenceScores.Add(avgConfidence);
+                }
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add(new MigrationDiagnostic
+                {
+                    Level = DiagnosticLevel.Warning,
+                    Message = $"Failed to analyze DI registrations in {configPath}: {ex.Message}",
+                    FilePath = configPath,
+                    Code = "DI002"
+                });
+            }
+        }
+
+        diagnostics.Add(new MigrationDiagnostic
+        {
+            Level = DiagnosticLevel.Info,
+            Message = "DI container analysis complete",
+            FilePath = projectDir
+        });
     }
 }

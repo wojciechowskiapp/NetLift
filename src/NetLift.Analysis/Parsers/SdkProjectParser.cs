@@ -271,7 +271,11 @@ public class SdkProjectParser : IProjectParser
         ProjectInfo projectInfo,
         CancellationToken cancellationToken)
     {
-        var projectDir = Path.GetDirectoryName(projectPath)!;
+        var projectDir = Path.GetDirectoryName(projectPath);
+        if (string.IsNullOrEmpty(projectDir))
+        {
+            throw new ArgumentException($"Invalid path - cannot determine directory: {projectPath}", nameof(projectPath));
+        }
 
         // Get explicit excludes from the project file
         var excludePatterns = GetExcludePatterns(doc);

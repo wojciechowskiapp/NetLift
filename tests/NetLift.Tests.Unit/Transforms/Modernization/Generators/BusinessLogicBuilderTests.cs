@@ -450,12 +450,10 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().NotContain("GetImageMimeType(");
-        result.Should().Contain("request.Extension switch");
-        result.Should().Contain("\"image/jpeg\"");
-        result.Should().Contain("\"image/png\"");
-        result.Should().NotContain("// TODO:"); // Single use should not have TODO
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("GetImageMimeType(");
+        result.Should().Contain("request.Extension"); // Parameter should be transformed to request.X
     }
 
     [Fact]
@@ -517,14 +515,10 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().Contain("// TODO: Private method CalculateDiscount() is also used by:");
-        result.Should().Contain("Update, Apply");
-        result.Should().Contain("Consider extracting to a shared helper class or domain service");
-        // Check that the method call itself (not just the name in TODO) is inlined
-        result.Should().NotContainAny(new[] { "CalculateDiscount(price)", "CalculateDiscount(request.Price)" },
-            "because the method call should be inlined");
-        result.Should().Contain("request.Price * 0.1m");
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("CalculateDiscount(");
+        result.Should().Contain("request.Price"); // Parameter should be transformed to request.X
     }
 
     [Fact]
@@ -588,9 +582,11 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().NotContain("FormatName(");
-        result.Should().Contain("request.FirstName + \" \" + request.LastName");
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("FormatName(");
+        result.Should().Contain("request.FirstName");
+        result.Should().Contain("request.LastName");
     }
 
     [Fact]
@@ -649,9 +645,10 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().NotContain("IsValidAge(");
-        result.Should().Contain("request.Age >= 18 && request.Age <= 120");
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("IsValidAge(");
+        result.Should().Contain("request.Age");
     }
 
     [Fact]
@@ -766,9 +763,10 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().NotContain("BuildQuery(");
-        result.Should().Contain("_context.Items.Where(x => x.IsActive)");
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("BuildQuery(");
+        result.Should().Contain("_context.Items");
     }
 
     [Fact]
@@ -836,10 +834,11 @@ public sealed class BusinessLogicBuilderTests
         // Act
         var result = _builder.BuildFromActionContext(context);
 
-        // Assert
-        result.Should().NotContain("AddTax(");
-        result.Should().Contain("request.Price1 * 1.2m");
-        result.Should().Contain("request.Price2 * 1.2m");
+        // Assert - Private methods are NO LONGER inlined; they're kept as calls
+        // and added separately to the handler class
+        result.Should().Contain("AddTax(");
+        result.Should().Contain("request.Price1");
+        result.Should().Contain("request.Price2");
     }
 
     #endregion

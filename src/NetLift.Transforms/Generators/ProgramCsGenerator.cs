@@ -73,6 +73,11 @@ public sealed class ProgramCsGenerator : IProgramCsGenerator
         {
             sb.AppendLine("using Microsoft.AspNetCore.Diagnostics.HealthChecks;");
         }
+
+        if (!string.IsNullOrEmpty(options.DbContextName))
+        {
+            sb.AppendLine("using Microsoft.EntityFrameworkCore;");
+        }
     }
 
     private static void GenerateConfigurationSetup(StringBuilder sb)
@@ -111,7 +116,25 @@ public sealed class ProgramCsGenerator : IProgramCsGenerator
         ProgramGenerationOptions options)
     {
         sb.AppendLine("// Configure services");
-        sb.AppendLine("builder.Services.AddControllers();");
+
+        // Use AddControllersWithViews for MVC apps with Razor views, AddControllers for API
+        if (options.IsMvcWithViews)
+        {
+            sb.AppendLine("builder.Services.AddControllersWithViews();");
+        }
+        else
+        {
+            sb.AppendLine("builder.Services.AddControllers();");
+        }
+
+        // Register DbContext if specified
+        if (!string.IsNullOrEmpty(options.DbContextName))
+        {
+            sb.AppendLine();
+            sb.AppendLine("// Register DbContext with SQL Server");
+            sb.AppendLine($"builder.Services.AddDbContext<{options.DbContextName}>(options =>");
+            sb.AppendLine($"    options.UseSqlServer(builder.Configuration.GetConnectionString(\"{options.ConnectionStringName}\")));");
+        }
 
         if (options.IncludeSwagger)
         {
@@ -213,7 +236,16 @@ public sealed class ProgramCsGenerator : IProgramCsGenerator
         sb.AppendLine();
 
         // Map endpoints
-        sb.AppendLine("app.MapControllers();");
+        if (options.IsMvcWithViews)
+        {
+            sb.AppendLine("app.MapControllerRoute(");
+            sb.AppendLine("    name: \"default\",");
+            sb.AppendLine("    pattern: \"{controller=Home}/{action=Index}/{id?}\");");
+        }
+        else
+        {
+            sb.AppendLine("app.MapControllers();");
+        }
 
         if (options.IncludeHealthChecks)
         {

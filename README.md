@@ -45,7 +45,13 @@ The tool also knows when it's uncertain. Instead of guessing, it adds a TODO com
 **ASP.NET MVC**
 - Controllers from `System.Web.Mvc` to `Microsoft.AspNetCore.Mvc`
 - Action results, filters, routing attributes
-- Razor view namespaces
+- `HttpContext.Current` to injected `IHttpContextAccessor`
+
+**Razor Views**
+- Html helpers to Tag Helpers (`Html.TextBoxFor` → `<input asp-for="">`)
+- Form helpers, validation, labels, dropdowns, checkboxes
+- `@Scripts.Render` and `@Styles.Render` to direct script/link tags
+- Partial views and display templates
 
 **Entity Framework**
 - DbContext constructors and configuration
@@ -53,17 +59,33 @@ The tool also knows when it's uncertain. Instead of guessing, it adds a TODO com
 - Include/ThenInclude patterns
 - Raw SQL queries
 
+**Static Files**
+- `Content` folder → `wwwroot/css`
+- `Scripts` folder → `wwwroot/js`
+- Fixes CSS `url()` paths after moving files
+- Root files like `favicon.ico` and `robots.txt` handled
+
+**SignalR**
+- Legacy SignalR hubs to ASP.NET Core SignalR
+- `GlobalHost.ConnectionManager` to injected `IHubContext`
+- Client method calls and group management
+
 **WCF Services**
 - Service contracts to gRPC or REST
 - Data contracts to DTOs
 - Client proxy generation
 
+**DI Container Analysis**
+- Detects Autofac, Unity, Ninject, StructureMap registrations
+- Maps container lifetimes to Microsoft.Extensions.DependencyInjection
+- Identifies property injection and interceptors that need manual review
+
 **Modernization** (optional, run after migrate)
 - CQRS structure with MediatR - generates commands, queries, and handlers
 - Controller slimming - extracts business logic into separate services
-- FluentValidation - creates validators for your DTOs
-- Auth patterns - updates Identity code toward JWT
-- Observability - adds structured logging and OpenTelemetry hooks
+- FluentValidation - creates validators from data annotations
+- Infrastructure patterns - Result types, logging behaviors, transaction handling
+- Manual `.Select()` projections for DTO mapping (same SQL efficiency as AutoMapper)
 
 ## Quick start
 
@@ -145,7 +167,7 @@ These frameworks have fundamentally different architectures. Automated migration
 dotnet test
 ```
 
-The test suite covers parsers, transformers, and end-to-end migration scenarios.
+1,819 tests covering parsers, transformers, and end-to-end migration scenarios.
 
 ## License
 

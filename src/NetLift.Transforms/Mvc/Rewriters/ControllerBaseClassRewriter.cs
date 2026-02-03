@@ -2,6 +2,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using NetLift.Core.Interfaces;
+using NetLift.Transforms.Common;
 using NetLift.Transforms.Mvc.Configuration;
 
 namespace NetLift.Transforms.Mvc.Rewriters;
@@ -56,7 +57,10 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
         }
 
         // Add new using directives
-        rewritten = AddRequiredUsings(rewritten);
+        if (rewritten is CompilationUnitSyntax compilationUnit)
+        {
+            rewritten = compilationUnit.AddRequiredUsings(_requiredUsings);
+        }
 
         return rewritten.ToFullString();
     }
@@ -114,7 +118,124 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
         // Add ILogger constructor injection
         transformed = AddLoggerInjection(transformed);
 
+        // Detect async methods and add System.Threading.Tasks using
+        if (HasAsyncMethods(transformed))
+        {
+            _requiredUsings.Add("System.Threading.Tasks");
+        }
+
+        // Detect [Authorize] attribute and add Authorization using
+        if (HasAuthorizeAttribute(transformed))
+        {
+            _requiredUsings.Add("Microsoft.AspNetCore.Authorization");
+        }
+
+        // Transform [ChildActionOnly] to TODO comment (doesn't exist in Core)
+        transformed = TransformChildActionOnlyAttribute(transformed);
+
         return transformed;
+    }
+
+    /// <summary>
+    /// Checks if the class has any async methods (return Task or Task&lt;T&gt;).
+    /// </summary>
+    private static bool HasAsyncMethods(ClassDeclarationSyntax node)
+    {
+        return node.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Any(m => m.ReturnType.ToString().StartsWith("Task", StringComparison.Ordinal) ||
+                      m.Modifiers.Any(SyntaxKind.AsyncKeyword));
+    }
+
+    /// <summary>
+    /// Checks if the class or any of its methods has [Authorize] attribute.
+    /// </summary>
+    private static bool HasAuthorizeAttribute(ClassDeclarationSyntax node)
+    {
+        // Check class-level attributes
+        if (HasAttribute(node, "Authorize"))
+        {
+            return true;
+        }
+
+        // Check method-level attributes
+        return node.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Any(m => m.AttributeLists
+                .SelectMany(al => al.Attributes)
+                .Any(a => a.Name.ToString().Equals("Authorize", StringComparison.Ordinal) ||
+                          a.Name.ToString().Equals("AuthorizeAttribute", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// Transforms [ChildActionOnly] attributes to TODO comments since this doesn't exist in Core.
+    /// In ASP.NET Core, child actions should be converted to ViewComponents.
+    /// </summary>
+    private ClassDeclarationSyntax TransformChildActionOnlyAttribute(ClassDeclarationSyntax node)
+    {
+        var hasChildAction = false;
+        var newMembers = new List<MemberDeclarationSyntax>();
+
+        foreach (var member in node.Members)
+        {
+            if (member is MethodDeclarationSyntax method)
+            {
+                var childActionAttr = method.AttributeLists
+                    .SelectMany(al => al.Attributes)
+                    .FirstOrDefault(a => a.Name.ToString().Equals("ChildActionOnly", StringComparison.Ordinal) ||
+                                         a.Name.ToString().Equals("ChildActionOnlyAttribute", StringComparison.Ordinal));
+
+                if (childActionAttr != null)
+                {
+                    hasChildAction = true;
+                    // Remove the [ChildActionOnly] attribute and add a TODO comment
+                    var newMethod = RemoveAttribute(method, "ChildActionOnly");
+
+                    // Add TODO comment as leading trivia
+                    var todoComment = SyntaxFactory.Comment("// TODO: [ChildActionOnly] removed - convert to ViewComponent for ASP.NET Core\n    ");
+                    var existingTrivia = newMethod.GetLeadingTrivia();
+                    newMethod = newMethod.WithLeadingTrivia(existingTrivia.Add(todoComment));
+
+                    newMembers.Add(newMethod);
+                    continue;
+                }
+            }
+            newMembers.Add(member);
+        }
+
+        if (hasChildAction)
+        {
+            _lowestConfidence = Math.Min(_lowestConfidence, 70);
+            _diagnostics.Add(new RewriterDiagnostic(
+                "[ChildActionOnly] attribute removed - convert these actions to ViewComponents",
+                RewriterDiagnosticSeverity.Warning));
+        }
+
+        return node.WithMembers(SyntaxFactory.List(newMembers));
+    }
+
+    /// <summary>
+    /// Removes a specific attribute from a method.
+    /// </summary>
+    private static MethodDeclarationSyntax RemoveAttribute(MethodDeclarationSyntax method, string attributeName)
+    {
+        var newAttributeLists = new List<AttributeListSyntax>();
+
+        foreach (var attrList in method.AttributeLists)
+        {
+            var remainingAttrs = attrList.Attributes
+                .Where(a => !a.Name.ToString().Equals(attributeName, StringComparison.Ordinal) &&
+                            !a.Name.ToString().Equals(attributeName + "Attribute", StringComparison.Ordinal))
+                .ToList();
+
+            if (remainingAttrs.Count > 0)
+            {
+                var newList = attrList.WithAttributes(SyntaxFactory.SeparatedList(remainingAttrs));
+                newAttributeLists.Add(newList);
+            }
+        }
+
+        return method.WithAttributeLists(SyntaxFactory.List(newAttributeLists));
     }
 
     /// <summary>
@@ -468,7 +589,28 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
     }
 
     /// <summary>
+    /// Visits attribute lists to remove empty attribute lists that result from removing attributes.
+    /// </summary>
+    public override SyntaxNode? VisitAttributeList(AttributeListSyntax node)
+    {
+        var visited = (AttributeListSyntax?)base.VisitAttributeList(node);
+        if (visited == null)
+        {
+            return null;
+        }
+
+        // If all attributes were removed, remove the entire attribute list
+        if (visited.Attributes.Count == 0)
+        {
+            return null;
+        }
+
+        return visited;
+    }
+
+    /// <summary>
     /// Visits attribute syntax to transform [Bind(Include = "...")] to [Bind("...")].
+    /// Also handles [Bind(Exclude = "...")] by removing the attribute (no Core equivalent).
     /// In ASP.NET Core, Bind attribute uses positional argument instead of named Include parameter.
     /// </summary>
     public override SyntaxNode? VisitAttribute(AttributeSyntax node)
@@ -487,11 +629,28 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
             return visited;
         }
 
-        // Check if it has an Include named argument
+        // Check if it has named arguments
         var argumentList = visited.ArgumentList;
         if (argumentList == null || argumentList.Arguments.Count == 0)
         {
             return visited;
+        }
+
+        // Find the Exclude argument - if present, remove the entire attribute
+        var excludeArg = argumentList.Arguments
+            .FirstOrDefault(a => a.NameEquals?.Name.Identifier.Text == "Exclude");
+
+        if (excludeArg != null)
+        {
+            // [Bind(Exclude = "...")] has no direct equivalent in ASP.NET Core
+            // Remove the attribute and log a warning
+            _lowestConfidence = Math.Min(_lowestConfidence, 60);
+            _diagnostics.Add(new RewriterDiagnostic(
+                "[Bind(Exclude = \"...\")] removed - use [BindNever] attribute on excluded properties instead",
+                RewriterDiagnosticSeverity.Warning));
+
+            // Return null to remove this attribute entirely
+            return null;
         }
 
         // Find the Include argument
@@ -517,44 +676,4 @@ public sealed class ControllerBaseClassRewriter : CSharpSyntaxRewriter, IControl
         return result;
     }
 
-    /// <summary>
-    /// Adds required using directives that were identified during rewriting.
-    /// </summary>
-    private SyntaxNode AddRequiredUsings(SyntaxNode root)
-    {
-        if (_requiredUsings.Count == 0)
-        {
-            return root;
-        }
-
-        if (root is CompilationUnitSyntax compilationUnit)
-        {
-            var existingUsings = compilationUnit.Usings
-                .Select(u => u.Name?.ToString())
-                .Where(n => n != null)
-                .ToHashSet(StringComparer.Ordinal);
-
-            var newUsings = _requiredUsings
-                .Where(ns => !existingUsings.Contains(ns) && !string.IsNullOrWhiteSpace(ns))
-                .Select(ns =>
-                {
-                    // Parse complete using directive to ensure proper spacing
-                    var usingCode = $"using {ns};";
-                    var usingTree = CSharpSyntaxTree.ParseText(usingCode);
-                    var parsedUsing = usingTree.GetRoot()
-                        .DescendantNodes()
-                        .OfType<UsingDirectiveSyntax>()
-                        .First();
-                    return parsedUsing.WithTrailingTrivia(SyntaxFactory.EndOfLine("\n"));
-                })
-                .ToList();
-
-            if (newUsings.Count > 0)
-            {
-                return compilationUnit.AddUsings(newUsings.ToArray());
-            }
-        }
-
-        return root;
-    }
 }

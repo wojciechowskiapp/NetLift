@@ -748,6 +748,11 @@ public class ModernizationOrchestrator : IModernizationOrchestrator
     {
         var commandInfo = CreateCommandInfo(context.Controller, context.Action, projectNamespace);
 
+        // Get private methods called by this action
+        var relevantPrivateMethods = context.Controller.PrivateMethods
+            .Where(pm => pm.CallingActions.Contains(context.Action.Name))
+            .ToList();
+
         // If we have extracted logic, generate the business logic code
         if (context.CombinedLogic != null)
         {
@@ -758,17 +763,23 @@ public class ModernizationOrchestrator : IModernizationOrchestrator
                 {
                     BusinessLogic = businessLogic,
                     Confidence = context.Confidence,
-                    ViewModelMutations = context.CombinedLogic.ViewModelMutations
+                    ViewModelMutations = context.CombinedLogic.ViewModelMutations,
+                    PrivateMethods = relevantPrivateMethods
                 };
             }
         }
 
-        return commandInfo;
+        return commandInfo with { PrivateMethods = relevantPrivateMethods };
     }
 
     private QueryInfo CreateQueryInfoWithLogic(ActionLogicContext context, string projectNamespace)
     {
         var queryInfo = CreateQueryInfo(context.Controller, context.Action, projectNamespace);
+
+        // Get private methods called by this action
+        var relevantPrivateMethods = context.Controller.PrivateMethods
+            .Where(pm => pm.CallingActions.Contains(context.Action.Name))
+            .ToList();
 
         // If we have extracted logic, generate the business logic code
         if (context.CombinedLogic != null)
@@ -780,12 +791,13 @@ public class ModernizationOrchestrator : IModernizationOrchestrator
                 {
                     BusinessLogic = businessLogic,
                     Confidence = context.Confidence,
-                    ViewModelMutations = context.CombinedLogic.ViewModelMutations
+                    ViewModelMutations = context.CombinedLogic.ViewModelMutations,
+                    PrivateMethods = relevantPrivateMethods
                 };
             }
         }
 
-        return queryInfo;
+        return queryInfo with { PrivateMethods = relevantPrivateMethods };
     }
 
     private int CalculateConfidence(IReadOnlyList<ControllerInfo> controllers)

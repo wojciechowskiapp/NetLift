@@ -55,6 +55,12 @@ public sealed record CommandInfo
     /// Used to generate response DTO properties.
     /// </summary>
     public IReadOnlyList<ViewModelMutation>? ViewModelMutations { get; init; }
+
+    /// <summary>
+    /// Gets the private methods that need to be included in the handler.
+    /// These are methods called by the action that should be copied (not inlined) to the handler.
+    /// </summary>
+    public IReadOnlyList<PrivateMethodInfo>? PrivateMethods { get; init; }
 }
 
 /// <summary>

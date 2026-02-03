@@ -27,16 +27,19 @@ public class PackageReferenceConverter : IPackageReferenceConverter
         ["Antlr"] = "Used by old bundling, not needed in ASP.NET Core",
         ["Respond"] = "IE8 polyfill, not needed for modern browsers",
         ["Modernizr"] = "Browser detection rarely needed in modern web apps",
-        // PagedList - replaced by X.PagedList
-        ["PagedList"] = "Replaced by X.PagedList.Mvc.Core",
-        ["PagedList.Mvc"] = "Replaced by X.PagedList.Mvc.Core",
         // Old ApplicationInsights - replaced by modern versions
         ["Microsoft.ApplicationInsights.Agent.Intercept"] = "Replaced by modern Application Insights SDK",
         ["Microsoft.ApplicationInsights.DependencyCollector"] = "Replaced by modern Application Insights SDK",
         ["Microsoft.ApplicationInsights.PerfCounterCollector"] = "Replaced by modern Application Insights SDK",
         ["Microsoft.ApplicationInsights.Web"] = "Replaced by Microsoft.ApplicationInsights.AspNetCore",
         ["Microsoft.ApplicationInsights.WindowsServer"] = "Replaced by modern Application Insights SDK",
-        ["Microsoft.ApplicationInsights.WindowsServer.TelemetryChannel"] = "Replaced by modern Application Insights SDK"
+        ["Microsoft.ApplicationInsights.WindowsServer.TelemetryChannel"] = "Replaced by modern Application Insights SDK",
+        // Old ASP.NET MVC integration packages
+        ["Autofac.Mvc5"] = "Use Autofac.Extensions.DependencyInjection for ASP.NET Core",
+        ["Autofac.WebApi2"] = "Use Autofac.Extensions.DependencyInjection for ASP.NET Core",
+        // ASP.NET SessionState and TelemetryCorrelation
+        ["Microsoft.AspNet.SessionState.SessionStateModule"] = "Use ASP.NET Core session middleware",
+        ["Microsoft.AspNet.TelemetryCorrelation"] = "Use OpenTelemetry or modern Application Insights"
     };
 
     // Packages that need to be replaced with modern equivalents
@@ -52,7 +55,10 @@ public class PackageReferenceConverter : IPackageReferenceConverter
             ["System.ValueTuple"] = (null, null, "ValueTuple is built into modern .NET"),
             ["Microsoft.ApplicationInsights"] = ("Microsoft.ApplicationInsights.AspNetCore", "2.22.0", "Modern Application Insights for ASP.NET Core"),
             ["Microsoft.jQuery.Unobtrusive.Validation"] = (null, null, "jQuery validation handled via npm/CDN in modern apps"),
-            ["Newtonsoft.Json"] = ("Newtonsoft.Json", "13.0.3", "Upgraded to latest secure version")
+            ["Newtonsoft.Json"] = ("Newtonsoft.Json", "13.0.3", "Upgraded to latest secure version"),
+            // PagedList - replaced by X.PagedList for .NET Core
+            ["PagedList"] = ("X.PagedList", "9.1.2", "PagedList replaced by X.PagedList for .NET Core"),
+            ["PagedList.Mvc"] = ("X.PagedList.Mvc.Core", "9.1.2", "PagedList.Mvc replaced by X.PagedList.Mvc.Core for ASP.NET Core")
         };
 
     // Analyzers and development-only packages that need PrivateAssets
@@ -213,7 +219,23 @@ public class PackageReferenceConverter : IPackageReferenceConverter
             "System.Diagnostics.Debug",
             "System.Runtime.Extensions",
             "System.Collections.Concurrent",
-            "System.Threading"
+            "System.Threading",
+            // Additional packages now built into .NET 8+
+            "System.Buffers",
+            "System.Memory",
+            "System.Numerics.Vectors",
+            "System.Runtime.CompilerServices.Unsafe",
+            "System.Threading.Tasks.Extensions",
+            "System.IO.Pipelines",
+            "System.Diagnostics.DiagnosticSource",
+            "System.Diagnostics.PerformanceCounter",
+            "System.Text.Encoding.CodePages",
+            "System.ValueTuple",
+            "System.ComponentModel.Annotations",
+            "System.Threading.Channels",
+            "System.Text.Encodings.Web",
+            "System.Text.Json",
+            "System.Collections.Immutable"
         };
 
         return frameworkPackages.Contains(packageId, StringComparer.OrdinalIgnoreCase);
@@ -249,11 +271,17 @@ public class PackageReferenceConverter : IPackageReferenceConverter
         if (packagesWithParsedVersions.Any())
         {
             // Prefer stable versions over pre-release, then highest version
-            return packagesWithParsedVersions
+            var selected = packagesWithParsedVersions
                 .OrderBy(x => x.IsPreRelease) // false (stable) comes before true (pre-release)
                 .ThenByDescending(x => x.ParsedVersion)
-                .First()
-                .Package;
+                .FirstOrDefault();
+
+            if (selected is null)
+            {
+                return packages[0];
+            }
+
+            return selected.Package;
         }
 
         // If we can't parse versions, return the first one
