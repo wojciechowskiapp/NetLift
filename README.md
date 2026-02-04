@@ -16,7 +16,10 @@ NetLift handles the mechanical parts. The `migrate` command gets you to .NET 8. 
 
 ## Examples
 
-Real migrations you can review:
+<img width="889" height="633" alt="image" src="https://github.com/user-attachments/assets/bce1b6d2-f304-4ab2-8852-3306eb9c78d9" />
+<img width="422" height="575" alt="image" src="https://github.com/user-attachments/assets/83367c75-825d-436c-ac2d-697ee09ae01e" />
+
+## Real migrations you can review:
 
 - [ContosoUniversity](https://github.com/wojciechowskiapp/ContosoUniversity.LegacyMigration/pull/2) - Academic sample app with students, courses, enrollments
 - [MvcMusicStore](https://github.com/wojciechowskiapp/MvcMusicStore.LegacyMigration/pull/2) - E-commerce app with shopping cart, checkout, CQRS modernization
